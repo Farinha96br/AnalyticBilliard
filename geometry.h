@@ -7,7 +7,7 @@
 /*
 Shapes do include
 "Full shapes":
-Circle, Elipse, Hyperbola, Parabola
+Elipse, Hyperbola, Parabola
 
 "Fractioned shapes"
 CircleArc, ElipseArc, HyperbolaArc, ParabolaArc, LineSegments.
@@ -15,7 +15,20 @@ CircleArc, ElipseArc, HyperbolaArc, ParabolaArc, LineSegments.
 
 */
 
-enum ObjectType { LINE = 0 }; // Line for now, but will include Cicle, LineSegment, 
+// LINE: a, b, c of a x + b y + c = 0, (a,b) kept unit
+
+// LINE_SEGMENT: x0, y0, x1, y1, rest is calculated on the fly
+
+// ELIPSE: x0, y0, a, b, theta, the elipse can be rotated
+
+// ELIPSE_ARC: x0, y0, a, b, theta, phi0, phi1. phi0/1 are the beginning/end of the arc in radians, follwing the trigonometry configuration
+
+
+
+enum ObjectType { LINE = 0, 
+                  LINE_SEGMENT = 1,
+                  ELIPSE = 2,
+                  ELIPSE_ARC = 3}; // Line for now, but will include Cicle, LineSegment, 
 struct Object {
     int type;
     double p[3]; // LINE: a, b, c of a x + b y + c = 0, (a,b) kept unit
