@@ -48,9 +48,11 @@ inline double firstRoot(double t1, double t2) {
     return t;
 }
 
-// smallest root > deadTime of A t^2 + B t + C, MAGIC_NO_COLLISION if none
+// smallest root > deadTime of A t^2 + B t + C
 inline double firstQuadRoot(double A, double B, double C) {
-    if (A == 0.0) { // no t^2 term: the equation is linear
+    
+    // special cases
+    if (A == 0.0) { 
         if (B == 0.0) return MAGIC_NO_COLLISION;
         return firstRoot(-C / B, MAGIC_NO_COLLISION);
     }
