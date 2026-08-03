@@ -27,8 +27,7 @@ CircleArc, ElipseArc, HyperbolaArc, ParabolaArc, LineSegments.
 
 enum ObjectType { LINE = 0, 
                   LINE_SEGMENT = 1,
-                  ELIPSE = 2,
-                  ELIPSE_ARC = 3}; // Line for now, but will include Cicle, LineSegment, 
+                  ELIPSE = 2}; // Line for now, but will include Cicle, LineSegment, 
 struct Object {
     int type;
     double p[3]; // LINE: a, b, c of a x + b y + c = 0, (a,b) kept unit
