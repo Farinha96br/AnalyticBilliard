@@ -22,13 +22,16 @@ x, y = sp.symbols('x y')
  
 Scene = {
     "g": 1.0,  # gravity
-    "objs": [
+    "collision": [
         # line: a*x + b*y + c = 0
-        {"type": "line", "a": 0.0, "b": 1.0, "c": 0.0},
-        {"type": "lineSegment", "a": 0.0, "b": 1.0, "c": -2.0},
-        {"type": "elipse", "x0": 0.0, "y0": 1.0, "a": 1.0, "b": 1.0, "theta": 0.0},
-        {"type": "elipse", "x0": 0.0, "y0": 1.0, "a": 1.0, "b": 1.0, "theta": 0.0, "phi1": 0.0, "phi2": -3.14},
-
+        {"type": "line", "params": [0.0, 1.0, 0.0]},
+        #line segment: (x1,y1) to (x2,y2)
+        {"type": "lineSegment", "params": [10.0, 0.0, 10.0, 7.0]},
+        # elipse arc: (x0,y0) center, a,b radii, and rotation angle theta
+        {"type": "elipse", "params": [0.0, 1.0, 1.0, 1.0, 0.0]},
+        # elipse arc: (x0,y0) center, a,b radii, and rotation angle theta stard and end angle
+        {"type": "elipseArc", "params": [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, -3.14]},
+    ]
 }
 
 
