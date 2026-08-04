@@ -12,12 +12,13 @@ int main(int argc, char **argv) {
     int Npart = 5;  // number of particles
 
     // create a box of four planes:
-    const int nObj = 4;
+    const int nObj = 5;
     Object objs[nObj] = {
         makeLine(0.0, 1.0, 0.0),   // floor    y = 0
         makeLine(0.0, 1.0, -10.0), // ceiling  y = 20
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
+        makeLineSegment(0.0, 0.0, 10.0, 5.0) // Line segment from (0,0) to (10,5)
     };
 
     //
@@ -25,7 +26,7 @@ int main(int argc, char **argv) {
 
     state *states = new state[Npart]; // allocate memory for the states
     for (int i = 0; i < Npart; ++i) {
-        states[i] = {0.0, 5.0, (rand() % 100) / 10.0 - 5.0, (rand() % 100) / 10.0 - 5.0}; // random velocities
+        states[i] = {0.0, double(i)*1.0, (rand() % 100) / 10.0 - 5.0, (rand() % 100) / 10.0 - 5.0}; // random velocities
     }
 
     // every particle fills its own slice of this buffer; nothing prints
@@ -44,15 +45,26 @@ int main(int argc, char **argv) {
         counts[i] = getCollisionStates(states[i], objs, nObj, Niter, &rows[i * rowsPer]);
     }
 
-    // write everything at once: the scene, then one row per collision
+    // write everything at once: the scene, then one row per collision.
+    // each shape emits its own tag and its own parameters: p[] means something
+    // different per type, so a single fixed format would misread every object
     for (int k = 0; k < nObj; ++k) {
-        printf("# line %f %f %f\n", objs[k].p[0], objs[k].p[1], objs[k].p[2]);
+        switch (objs[k].type) {
+        case LINE:
+            printf("# line %.17g %.17g %.17g\n",
+                   objs[k].p[0], objs[k].p[1], objs[k].p[2]);
+            break;
+        case LINE_SEGMENT:
+            printf("# segment %.17g %.17g %.17g %.17g\n",
+                   objs[k].p[0], objs[k].p[1], objs[k].p[2], objs[k].p[3]);
+            break;
+        }
     }
     printf("ID t x y vx vy\n");
     for (int i = 0; i < Npart; ++i) {
         for (int r = 0; r < counts[i]; ++r) {
             Row w = rows[i * rowsPer + r];
-            printf("%d %f %f %f %f %f\n", i, w.t, w.x, w.y, w.vx, w.vy);
+            printf("%d %.17g %.17g %.17g %.17g %.17g\n", i, w.t, w.x, w.y, w.vx, w.vy);
         }
     }
 

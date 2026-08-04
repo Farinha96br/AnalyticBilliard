@@ -1,8 +1,10 @@
 #pragma once
 /*
-        1. ballistics    the exact trajectory
-        2. reflection    mirror the velocity about the surface normal
-        3. simulation    the per-particle loop (CPU loop == GPU kernel)
+        1. reflection    mirror the velocity about the surface normal
+        2. simulation    the per-particle loop (CPU loop == GPU kernel)
+
+        the ballistics (trajectory) live in geometry.h, where the shapes
+        that have to sample the parabola can reach them
 */
 
 
@@ -13,19 +15,9 @@
 #endif
 
 
-// 1. 
-// Simply get the state at time t, given the initial state s.
+// 1.
 
-inline state trajectory(state s, double t) {
-    return {s.x + s.vx * t,
-            s.y + s.vy * t - 0.5 * g * t * t,
-            s.vx,
-            s.vy - g * t};
-}
-
-// 2.
-
-// 2.1 Reflection
+// 1.1 Reflection
 // mirror the velocity about the normal
 
 inline state bounce(Object o, state s) {
@@ -36,7 +28,7 @@ inline state bounce(Object o, state s) {
             s.vy - (1.0 + e) * vn * n.y};
 }
 
-//3. simulation
+//2. simulation
 // Simulate the bounces of a particle: bounce off whichever object comes first
 
 
