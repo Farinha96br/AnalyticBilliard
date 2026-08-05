@@ -29,12 +29,18 @@ CircleArc, ElipseArc, HyperbolaArc, ParabolaArc, LineSegments.
 
 enum ObjectType { LINE = 0, 
                   LINE_SEGMENT = 1,
-                  ELIPSE = 2}; // Line for now, but will include Cicle, LineSegment, 
+                  ELIPSE = 2,
+                  ELIPSE_ARC = 3}; // Line for now, but will include Cicle, LineSegment, 
 struct Object {
     int type;
-    double p[7]; // LINE:         a, b, c of a x + b y + c = 0, (a,b) kept unit
-                 // LINE_SEGMENT: x0, y0, x1, y1
-                 // ELIPSE:       x0, y0, a, b, theta, cos(theta), sin(theta)
+    double p[13]; // LINE:         a, b, c of a x + b y + c = 0, (a,b) kept unit
+                  // LINE_SEGMENT: x0, y0, x1, y1
+                  // ELIPSE:       x0, y0, a, b, theta, cos(theta), sin(theta)
+                  // ELIPSE_ARC:   the seven above, then
+                  //               phi0, phi1, cos(phi0), sin(phi0), cos(phi1), sin(phi1)
+                  //
+                  // an arc's first seven slots are byte for byte an ELIPSE, which is
+                  // why every elipse* function below reads an arc without conversion
 };
 
 #ifdef _OPENMP
@@ -236,6 +242,17 @@ inline Object makeElipse(double x0, double y0, double a, double b, double theta)
     return {ELIPSE, {x0, y0, a, b, theta, cos(theta), sin(theta)}};
 }
 
+// the arc runs counterclockwise from phi0 to phi1, in the ellipse's own frame.
+// the endpoint directions are turned into cosines and sines here, on the host,
+// so that onArc can decide containment with sign tests alone: an atan2 in the
+// hot path would be a transcendental on the device, and those do not match the
+// host's bit for bit
+inline Object makeElipseArc(double x0, double y0, double a, double b, double theta,
+                            double phi0, double phi1) {
+    return {ELIPSE_ARC, {x0, y0, a, b, theta, cos(theta), sin(theta),
+                         phi0, phi1, cos(phi0), sin(phi0), cos(phi1), sin(phi1)}};
+}
+
 // ------------------------------------------------------------------ 3. lines
 
 // substitute the parabola into a x + b y + c: A t^2 + B t + C.
@@ -320,7 +337,9 @@ inline vector2D elipseToWorld(Object o, double u, double v, bool isPoint) {
 // in t, so their squares are quartic. A0 is where the particle starts: negative
 // inside the ellipse, positive outside, which is why neither case needs its own
 // branch -- the roots come out the same way regardless
-inline double elipseHitTime(Object o, state s) {
+// kept apart from elipseHitTime so an arc can look at every root before one is
+// chosen, exactly as lineRoots is kept apart for the segment's sake
+inline Roots elipseRoots(Object o, state s) {
     double c = o.p[5], sn = o.p[6];
     double ia = 1.0 / (o.p[2] * o.p[2]), ib = 1.0 / (o.p[3] * o.p[3]);
     double dx = s.x - o.p[0], dy = s.y - o.p[1];
@@ -328,12 +347,15 @@ inline double elipseHitTime(Object o, state s) {
     double u0 = c * dx + sn * dy, u1 = c * s.vx + sn * s.vy, u2 = -0.5 * g * sn;
     double v0 = -sn * dx + c * dy, v1 = -sn * s.vx + c * s.vy, v2 = -0.5 * g * c;
 
-    Roots r = quartRoots(ia * u2 * u2 + ib * v2 * v2,
-                         2.0 * (ia * u1 * u2 + ib * v1 * v2),
-                         ia * (u1 * u1 + 2.0 * u0 * u2) + ib * (v1 * v1 + 2.0 * v0 * v2),
-                         2.0 * (ia * u0 * u1 + ib * v0 * v1),
-                         ia * u0 * u0 + ib * v0 * v0 - 1.0);
-    return firstRootN(r);
+    return quartRoots(ia * u2 * u2 + ib * v2 * v2,
+                      2.0 * (ia * u1 * u2 + ib * v1 * v2),
+                      ia * (u1 * u1 + 2.0 * u0 * u2) + ib * (v1 * v1 + 2.0 * v0 * v2),
+                      2.0 * (ia * u0 * u1 + ib * v0 * v1),
+                      ia * u0 * u0 + ib * v0 * v0 - 1.0);
+}
+
+inline double elipseHitTime(Object o, state s) {
+    return firstRootN(elipseRoots(o, s));
 }
 
 // the gradient of u^2/a^2 + v^2/b^2 points straight out of the surface
@@ -357,7 +379,58 @@ inline state elipseSnap(Object o, state s) {
     return {w.x, w.y, s.vx, s.vy};
 }
 
-// --------------------------------------------------------------- 6. dispatch
+// ----------------------------------------------------------- 6. elipse arcs
+
+// an arc is the ellipse carrying it, plus an angular bound: the roots come from
+// the ellipse untouched and only the ones landing between phi0 and phi1 survive,
+// the same division of labour a segment has with its line
+
+// is the impact point inside the arc's span?
+//
+// on the ellipse u^2/a^2 + v^2/b^2 = 1, so (u/a, v/b) is already (cos phi, sin phi)
+// and the parametric angle needs no inverse trig to reach. it is left unnormalised
+// on purpose: scaling by a positive number cannot flip the sign of a cross product,
+// and only signs are read below.
+//
+// atan2 would say the same thing in one line, and is deliberately not used: it is
+// not correctly rounded, the device's version disagrees with glibc's in the last
+// bits, and that alone would cost the CPU and GPU their bit-for-bit agreement
+inline bool onArc(Object o, double t, state s) {
+    state at = trajectory(s, t);
+    vector2D l = elipseLocal(o, at.x, at.y);
+    double dx = l.x / o.p[2], dy = l.y / o.p[3];
+
+    double c0 = o.p[9], s0 = o.p[10], c1 = o.p[11], s1 = o.p[12];
+    double cr0 = c0 * dy - s0 * dx; // sin(phi  - phi0)
+    double cr1 = dx * s1 - dy * c1; // sin(phi1 - phi)
+    double crS = c0 * s1 - s0 * c1; // sin(phi1 - phi0)
+
+    // a sweep of half a turn or less is convex, so the point must be past phi0 and
+    // short of phi1 at once. a longer sweep is the complement of the short gap left
+    // over, and being past either end is enough
+    if (crS >= 0.0) return cr0 >= 0.0 && cr1 >= 0.0;
+    return cr0 >= 0.0 || cr1 >= 0.0;
+}
+
+// the ellipse's roots, minus the ones landing off the ends. all of them have to be
+// tested, not just the earliest: a particle coming in through the open side misses
+// the arc on the near root and lands on it on the far one
+inline double elipseArcHitTime(Object o, state s) {
+    Roots r = elipseRoots(o, s);
+    int kept = 0;
+    for (int i = 0; i < r.n; ++i) {
+        if (onArc(o, r.t[i], s)) r.t[kept++] = r.t[i];
+    }
+    r.n = kept;
+    return firstRootN(r);
+}
+
+// no conversion needed: an arc's first seven parameters are an ellipse already
+inline vector2D elipseArcNormal(Object o, state s) { return elipseNormal(o, s); }
+
+inline state elipseArcSnap(Object o, state s) { return elipseSnap(o, s); }
+
+// --------------------------------------------------------------- 7. dispatch
 
 // time at which the trajectory meets the object, MAGIC_NO_COLLISION if never
 inline double hitTime(Object o, state s) {
@@ -365,6 +438,7 @@ inline double hitTime(Object o, state s) {
     case LINE: return lineHitTime(o, s);
     case LINE_SEGMENT: return segmentHitTime(o, s);
     case ELIPSE: return elipseHitTime(o, s);
+    case ELIPSE_ARC: return elipseArcHitTime(o, s);
     }
     return MAGIC_NO_COLLISION;
 }
@@ -375,6 +449,7 @@ inline vector2D normalAt(Object o, state s) {
     case LINE: return lineNormal(o, s);
     case LINE_SEGMENT: return segmentNormal(o, s);
     case ELIPSE: return elipseNormal(o, s);
+    case ELIPSE_ARC: return elipseArcNormal(o, s);
     }
     return {0.0, 0.0};
 }
@@ -385,6 +460,7 @@ inline state snapTo(Object o, state s) {
     case LINE: return lineSnap(o, s);
     case LINE_SEGMENT: return segmentSnap(o, s);
     case ELIPSE: return elipseSnap(o, s);
+    case ELIPSE_ARC: return elipseArcSnap(o, s);
     }
     return s;
 }

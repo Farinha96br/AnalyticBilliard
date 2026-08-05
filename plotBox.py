@@ -15,7 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Arc, Ellipse
 
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#f4c72e", "#00420d"]  # categorical slots 1-5
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#dcdbd5", "#fcfcfb"
@@ -75,6 +75,11 @@ def draw_scene(ax, scene):
             cx, cy, a, b, th = p
             ax.add_patch(Ellipse((cx, cy), 2 * a, 2 * b, angle=np.degrees(th),
                                  fill=False, ec=MUTED, lw=2, zorder=1))
+        elif kind == "elipsearc":  # theta1/theta2 are degrees relative to angle
+            cx, cy, a, b, th, phi0, phi1 = p
+            ax.add_patch(Arc((cx, cy), 2 * a, 2 * b, angle=np.degrees(th),
+                             theta1=np.degrees(phi0), theta2=np.degrees(phi1),
+                             ec=MUTED, lw=2, zorder=1))
         elif kind == "circle":
             ax.add_patch(plt.Circle((p[0], p[1]), p[2], fill=False,
                                     ec=MUTED, lw=2, zorder=1))

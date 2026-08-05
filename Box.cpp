@@ -8,18 +8,21 @@
 
 int main(int argc, char **argv) {
 
-    int Niter = 1e6; // number of bounces per particle
+    int Niter = 1e4; // number of bounces per particle
     int Npart = 5;  // number of particles
 
     // create a box of four planes:
-    const int nObj = 6;
+    const int nObj = 7;
     Object objs[nObj] = {
         makeLine(0.0, 1.0, 0.0),   // floor    y = 0
         makeLine(0.0, 1.0, -10.0), // ceiling  y = 20
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
         makeLineSegment(0.0, 0.0, 10.0, 5.0), // Line segment from (0,0) to (10,5)
-        makeElipse(-11.0, 5.0, 5.0, 2.0, 0.5) // rotated obstacle, hit from outside
+        makeElipse(-11.0, 5.0, 5.0, 2.0, 0.5), // rotated obstacle, hit from outside
+        // an open cup off to the right, clear of both the segment and the ellipse.
+        // the gap is the interesting part: particles have to fall in and out of it
+        makeElipseArc(15.0, 5.0, 4.0, 2.5, -0.3, 3.4, 6.0)
     };
 
     //
@@ -62,6 +65,11 @@ int main(int argc, char **argv) {
         case ELIPSE: // only the five real parameters: cos/sin are derived from theta
             printf("# elipse %.17g %.17g %.17g %.17g %.17g\n",
                    objs[k].p[0], objs[k].p[1], objs[k].p[2], objs[k].p[3], objs[k].p[4]);
+            break;
+        case ELIPSE_ARC: // the ellipse's five, then the two angular bounds
+            printf("# elipsearc %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+                   objs[k].p[0], objs[k].p[1], objs[k].p[2], objs[k].p[3], objs[k].p[4],
+                   objs[k].p[7], objs[k].p[8]);
             break;
         }
     }
