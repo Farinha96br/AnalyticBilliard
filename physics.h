@@ -2,9 +2,6 @@
 /*
         1. reflection    mirror the velocity about the surface normal
         2. simulation    the per-particle loop (CPU loop == GPU kernel)
-
-        the ballistics (trajectory) live in geometry.h, where the shapes
-        that have to sample the parabola can reach them
 */
 
 
@@ -18,7 +15,6 @@
 // 1.
 
 // 1.1 Reflection
-// mirror the velocity about the normal
 
 inline state bounce(Object o, state s) {
     vector2D n = normalAt(o, s);
@@ -29,7 +25,6 @@ inline state bounce(Object o, state s) {
 }
 
 //2. simulation
-// Simulate the bounces of a particle: bounce off whichever object comes first
 
 
 

@@ -15,6 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.patches import Ellipse
 
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#f4c72e", "#00420d"]  # categorical slots 1-5
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#dcdbd5", "#fcfcfb"
@@ -67,6 +68,13 @@ def draw_scene(ax, scene):
             else:
                 ax.plot([xlo, xhi], [-(a * xlo + c) / b, -(a * xhi + c) / b],
                         color=MUTED, lw=2, zorder=1)
+        elif kind == "segment":  # its endpoints are the whole shape: no clipping
+            x0, y0, x1, y1 = p
+            ax.plot([x0, x1], [y0, y1], color=MUTED, lw=2, zorder=1)
+        elif kind == "elipse":  # width/height are the full axes, angle in degrees
+            cx, cy, a, b, th = p
+            ax.add_patch(Ellipse((cx, cy), 2 * a, 2 * b, angle=np.degrees(th),
+                                 fill=False, ec=MUTED, lw=2, zorder=1))
         elif kind == "circle":
             ax.add_patch(plt.Circle((p[0], p[1]), p[2], fill=False,
                                     ec=MUTED, lw=2, zorder=1))

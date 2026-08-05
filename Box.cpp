@@ -12,13 +12,14 @@ int main(int argc, char **argv) {
     int Npart = 5;  // number of particles
 
     // create a box of four planes:
-    const int nObj = 5;
+    const int nObj = 6;
     Object objs[nObj] = {
         makeLine(0.0, 1.0, 0.0),   // floor    y = 0
         makeLine(0.0, 1.0, -10.0), // ceiling  y = 20
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
-        makeLineSegment(0.0, 0.0, 10.0, 5.0) // Line segment from (0,0) to (10,5)
+        makeLineSegment(0.0, 0.0, 10.0, 5.0), // Line segment from (0,0) to (10,5)
+        makeElipse(-11.0, 5.0, 5.0, 2.0, 0.5) // rotated obstacle, hit from outside
     };
 
     //
@@ -57,6 +58,10 @@ int main(int argc, char **argv) {
         case LINE_SEGMENT:
             printf("# segment %.17g %.17g %.17g %.17g\n",
                    objs[k].p[0], objs[k].p[1], objs[k].p[2], objs[k].p[3]);
+            break;
+        case ELIPSE: // only the five real parameters: cos/sin are derived from theta
+            printf("# elipse %.17g %.17g %.17g %.17g %.17g\n",
+                   objs[k].p[0], objs[k].p[1], objs[k].p[2], objs[k].p[3], objs[k].p[4]);
             break;
         }
     }
