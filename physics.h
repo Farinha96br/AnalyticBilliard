@@ -27,13 +27,21 @@ inline Frame frameFromPoints(double x0, double y0, double x1, double y1) {
     return {{x0, y0}, t, {-t.y, t.x}};
 }
 
+// the two signs act on the VELOCITY and nothing else. flipNormal decides which
+// face the particle leaves by, flipTangent which way it then runs along the
+// partner. neither moves it: where it comes out is set by the two frames, and so
+// by the order the partner's endpoints were written in.
+//
+// keeping them apart is what makes each one mean one thing. all four sign pairs
+// put the particle at the same point, differing only in where it goes next, and
+// since the position is untouched they all conserve energy on a level pair
 inline state teleport(Object o, state s) {
     Frame a = frameFromPoints(o.q[0], o.q[1], o.q[2], o.q[3]); // this portal
     Frame b = frameFromPoints(o.q[4], o.q[5], o.q[6], o.q[7]); // the far side
-    double flip = o.q[8];
+    double flipNormal = o.q[8], flipTangent = o.q[9];
 
-    // the same distance along the exit: the pair is the same size, so an end
-    // still comes out at an end
+    // the same distance along the exit. the pair is the same size, so an end
+    // comes out at an end, whichever end the partner's frame starts from
     double u = (s.x - a.o.x) * a.t.x + (s.y - a.o.y) * a.t.y;
 
     double vt = s.vx * a.t.x + s.vy * a.t.y;
@@ -41,8 +49,8 @@ inline state teleport(Object o, state s) {
 
     return {b.o.x + u * b.t.x,
             b.o.y + u * b.t.y,
-            vt * b.t.x + flip * vn * b.n.x,
-            vt * b.t.y + flip * vn * b.n.y};
+            flipTangent * vt * b.t.x + flipNormal * vn * b.n.x,
+            flipTangent * vt * b.t.y + flipNormal * vn * b.n.y};
 }
 
 inline state respond(Object o, state s) {
@@ -77,13 +85,26 @@ inline int getCollisionStates(state s, const Object *objs, int nObj, int maxB,
         state at = trajectory(s, tc);
         t += tc;
 
-        // a portal moves the particle elsewhere, so nothing else touched back at
-        // the old spot still applies: the first one found is the whole event
         int portal = -1;
         for (int k = 0; k < nObj; ++k) {
             if (objs[k].response == PORTAL && hitTime(objs[k], s) <= tc + deadTime) {
                 portal = k;
                 break;
+            }
+        }
+
+        // reflect off every ordinary surface within deadTime of tc, not just the
+        // first: a corner is one impact against both walls, and resolving only one
+        // would leave the particle on the other moving outward.
+        //
+        // this runs even when a portal fired. a portal moves the particle, so it
+        // has to go LAST -- but a wall genuinely touched here still turns the
+        // velocity, and skipping it strands the particle. a portal ending on a
+        // wall is where that shows: the particle is carried away still travelling
+        // into the surface it should have bounced off, and leaves the scene
+        for (int k = 0; k < nObj; ++k) {
+            if (objs[k].response != PORTAL && hitTime(objs[k], s) <= tc + deadTime) {
+                at = bounce(objs[k], snapTo(objs[k], at));
             }
         }
 
@@ -99,14 +120,6 @@ inline int getCollisionStates(state s, const Object *objs, int nObj, int maxB,
             s = teleport(objs[portal], arrival);
         } else {
             if (nRowsWritten + 1 > cap) break;
-            // every object within deadTime of tc, not just the first: a corner is
-            // one impact against both walls, and resolving only one would leave
-            // the particle on the other moving outward
-            for (int k = 0; k < nObj; ++k) {
-                if (hitTime(objs[k], s) <= tc + deadTime) {
-                    at = bounce(objs[k], snapTo(objs[k], at));
-                }
-            }
             s = at;
         }
         out[nRowsWritten++] = {t, s.x, s.y, s.vx, s.vy};
@@ -136,8 +149,9 @@ inline int getFinalPosition(state s, const Object *objs, int nObj, double t_f, s
 
         state at = trajectory(s, tc);
 
-        // resolved exactly as in getCollisionStates: a portal is exclusive,
-        // anything else takes every object within deadTime of tc
+        // resolved exactly as in getCollisionStates: every ordinary surface within
+        // deadTime of tc turns the velocity here, and a portal, if one fired,
+        // moves the result afterwards
         int portal = -1;
         for (int k = 0; k < nObj; ++k) {
             if (objs[k].response == PORTAL && hitTime(objs[k], s) <= tc + deadTime) {
@@ -145,17 +159,12 @@ inline int getFinalPosition(state s, const Object *objs, int nObj, double t_f, s
                 break;
             }
         }
-
-        if (portal >= 0) {
-            s = teleport(objs[portal], snapTo(objs[portal], at));
-        } else {
-            for (int k = 0; k < nObj; ++k) {
-                if (hitTime(objs[k], s) <= tc + deadTime) {
-                    at = bounce(objs[k], snapTo(objs[k], at));
-                }
+        for (int k = 0; k < nObj; ++k) {
+            if (objs[k].response != PORTAL && hitTime(objs[k], s) <= tc + deadTime) {
+                at = bounce(objs[k], snapTo(objs[k], at));
             }
-            s = at;
         }
+        s = (portal >= 0) ? teleport(objs[portal], snapTo(objs[portal], at)) : at;
         t += tc;
         ++nBounces;
     }

@@ -6,8 +6,12 @@
 
 int main() {
 
-    int Niter = 1e4; // events per particle
+    int Niter = 1e6; // events per particle
     int Npart = 5;
+
+    // the portal pair, named so each can point at the other
+    Object portalA = makeLineSegment(-18.5, 2.0, -18.5, 6.0);
+    Object portalB = makeLineSegment(-3.0, 2.0, -3.0, 6.0);
 
     const int nObj = 9;
     Object objs[nObj] = {
@@ -25,8 +29,8 @@ int main() {
         // heights on purpose: a portal that moved a particle up or down would
         // change its potential energy, and the energy check would stop being a
         // test and start being a known failure
-        asPortal(makeLineSegment(-18.5, 2.0, -18.5, 6.0), -3.0, 2.0, -3.0, 6.0, 1.0),
-        asPortal(makeLineSegment(-3.0, 2.0, -3.0, 6.0), -18.5, 2.0, -18.5, 6.0, 1.0)
+        asPortal(portalA, portalB, 1.0),
+        asPortal(portalB, portalA, 1.0)
     };
 
     // fanned up the x = 0 line, each with its own random velocity. srand is left
@@ -80,10 +84,10 @@ int main() {
         // a portal's surface is described above like any other; this second
         // record carries where it leads, so the plot can draw the link
         if (objs[k].response == PORTAL) {
-            printf("# portal %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+            printf("# portal %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
                    objs[k].q[0], objs[k].q[1], objs[k].q[2], objs[k].q[3],
                    objs[k].q[4], objs[k].q[5], objs[k].q[6], objs[k].q[7],
-                   objs[k].q[8]);
+                   objs[k].q[8], objs[k].q[9]);
         }
     }
     printf("ID t x y vx vy\n");

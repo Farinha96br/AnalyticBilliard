@@ -1,8 +1,8 @@
 // a small scene whose only purpose is to show what a portal does.
 //
-//   g++ -O2 -ffp-contract=off -o portals.out Portals.cpp
-//   ./portals.out > portals.dat
-//   python3 plotBox.py portals.dat --out portals.png --bounces 14 --g 1.0
+//   g++ -O2 -ffp-contract=off -o portalsegment.out PortalSegment.cpp
+//   ./portalsegment.out > portalsegment.dat
+//   python3 plotBox.py portalsegment.dat --out portalsegment.png --bounces 8 --g 1.0
 //
 // one portal stands vertical and the other lies flat, a quarter turn apart, which
 // is where the interesting part shows: the velocity is carried across in the
@@ -12,13 +12,16 @@
 //
 // crossing does change a particle's height, and so its potential energy. that is
 // fine for a picture; keep a pair level when the energy has to be conserved, as
-// the pair in Box.cpp is.
+// the pair in ComplexExample.cpp is.
 #include "physics.h"
 #include <cstdio>
 
 int main() {
     const int Niter = 14; // few enough that a single path can be followed by eye
-    const int Npart = 3;
+    const int Npart = 1;
+
+    Object upright = makeLineSegment(-8.0, 2.0, -8.0, 8.0);
+    Object flat    = makeLineSegment(2.0, 5.0, 8.0, 5.0);
 
     const int nObj = 6;
     Object objs[nObj] = {
@@ -29,16 +32,15 @@ int main() {
 
         // one upright, one flat, so a crossing turns the particle by a quarter
         // turn. both are 6 long, as they have to be, and each names the other
-        asPortal(makeLineSegment(-8.0, 2.0, -8.0, 8.0), 2.0, 5.0, 8.0, 5.0, -1.0),
-        asPortal(makeLineSegment(2.0, 5.0, 8.0, 5.0), -8.0, 2.0, -8.0, 8.0, -1.0),
+        asPortal(upright, flat, -1.0),
+        asPortal(flat, upright, -1.0),
     };
 
-    // three particles fanned out from the same point, all heading right into the
-    // upright portal so the first crossing of each is easy to pick out
+    // one particle, launched straight at the upright portal with nothing in the
+    // way, so the quarter turn is the first thing that happens to it. a second
+    // path over the top would only hide the one worth following
     state states[Npart] = {
         {-15.0, 5.0, 4.0, 2.0},
-        {-15.0, 5.0, 4.0, 0.0},
-        {-15.0, 5.0, 4.0, -1.0},
     };
 
     const int rowsPer = 2 * Niter + 1; // a portal event costs two rows
@@ -58,9 +60,10 @@ int main() {
                    objs[k].p[0], objs[k].p[1], objs[k].p[2], objs[k].p[3]);
         }
         if (objs[k].response == PORTAL) {
-            printf("# portal %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+            printf("# portal %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
                    objs[k].q[0], objs[k].q[1], objs[k].q[2], objs[k].q[3],
-                   objs[k].q[4], objs[k].q[5], objs[k].q[6], objs[k].q[7], objs[k].q[8]);
+                   objs[k].q[4], objs[k].q[5], objs[k].q[6], objs[k].q[7],
+                   objs[k].q[8], objs[k].q[9]);
         }
     }
 

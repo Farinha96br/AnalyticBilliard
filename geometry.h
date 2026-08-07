@@ -25,9 +25,10 @@ struct Object {
                   // an arc's first seven slots are byte for byte an ELIPSE, which is
                   // why every elipse* function below reads an arc without conversion
 
-    double q[9];  // PORTAL: a0x, a0y, a1x, a1y  this portal's own frame
+    double q[10]; // PORTAL: a0x, a0y, a1x, a1y  this portal's own frame
                   //         b0x, b0y, b1x, b1y  the frame it leads to
-                  //         flip               +1 pass through, -1 exit the front
+                  //         flipNormal   +1 carry through, -1 leave by the front face
+                  //         flipTangent  +1 same sense,    -1 mirrored about the origin
                   //
                   // the partner is held as coordinates, never as an index into the
                   // object array: nothing to dereference on the device, and the
@@ -247,33 +248,6 @@ inline Object makeElipseArc(double x0, double y0, double a, double b, double the
             {}};
 }
 
-// ----------------------------------------------------------------- 2a. portals
-
-// contact moves the particle to the named frame instead of reflecting it.
-// flip = +1 carries it out the far side, -1 out the partner's front face.
-//
-// segments only: an endless line has no endpoints to take a frame from.
-//
-// the pair must be the same size, or the map would stretch position along the
-// surface while leaving velocity alone. rather than trust the caller, the exit
-// is rebuilt at this portal's length -- b1 gives the direction, not the reach
-inline Object asPortal(Object o, double b0x, double b0y, double b1x, double b1y,
-                       double flip) {
-    double ax = o.p[2] - o.p[0], ay = o.p[3] - o.p[1];
-    double len = sqrt(ax * ax + ay * ay);
-    double bx = b1x - b0x, by = b1y - b0y;
-    double blen = sqrt(bx * bx + by * by);
-
-    o.response = PORTAL;
-    o.q[0] = o.p[0]; o.q[1] = o.p[1]; o.q[2] = o.p[2]; o.q[3] = o.p[3];
-    o.q[4] = b0x;
-    o.q[5] = b0y;
-    o.q[6] = b0x + len * bx / blen;
-    o.q[7] = b0y + len * by / blen;
-    o.q[8] = flip;
-    return o;
-}
-
 // ------------------------------------------------------------------ 3. lines
 
 // substitute the parabola into a x + b y + c: A t^2 + B t + C.
@@ -332,6 +306,48 @@ inline vector2D segmentNormal(Object o, state s) {
 
 inline state segmentSnap(Object o, state s) {
     return lineSnap(segmentLine(o), s);
+}
+
+// --------------------------------------------------------------- 4a. portals
+
+// a portal moves the particle to its partner instead of reflecting it. the
+// partner is named as an Object rather than having its coordinates respelled,
+// so the two can never drift apart.
+//
+// the two signs act on the velocity alone: flipNormal picks which face the
+// particle leaves by, flipTangent which way it runs along the partner afterwards.
+//
+// WHERE it comes out is not theirs to say. that is fixed by the frames, and so by
+// the order the partner's endpoints were written in: name the partner
+// makeLineSegment(8,8, 8,2) rather than makeLineSegment(8,2, 8,8) and the mapping
+// runs end for end instead of end to end. reversing the order turns the tangent
+// over, and the normal is the tangent turned a quarter turn, so the exit face
+// swaps with it -- pass flipNormal = -1 alongside to keep the original side
+
+// a segment is oriented by its own endpoints and needs no anchor. the exit takes
+// its origin and direction from the partner but its LENGTH from here, so a pair
+// of unequal size cannot stretch the particle along the surface
+inline Object asPortal(Object o, Object partner, double flipNormal,
+                       double flipTangent = 1.0) {
+    double ax = o.p[2] - o.p[0], ay = o.p[3] - o.p[1];
+    double len = sqrt(ax * ax + ay * ay);
+
+    double bx = partner.p[2] - partner.p[0], by = partner.p[3] - partner.p[1];
+    double blen = sqrt(bx * bx + by * by);
+    double tx = bx / blen, ty = by / blen;
+    double ox = partner.p[0], oy = partner.p[1];
+
+    o.response = PORTAL;
+    o.q[0] = o.p[0]; o.q[1] = o.p[1]; o.q[2] = o.p[2]; o.q[3] = o.p[3];
+    // the far point is placed a whole length away, not one unit: frameFromPoints
+    // normalises whatever it is handed, and normalising a unit vector is not the
+    // identity in floating point. keeping the length here makes the stored frame
+    // the segment's own, to the last bit
+    o.q[4] = ox;                o.q[5] = oy;
+    o.q[6] = ox + len * tx;     o.q[7] = oy + len * ty;
+    o.q[8] = flipNormal;
+    o.q[9] = flipTangent;
+    return o;
 }
 
 // --------------------------------------------------------------- 5. elipses
