@@ -4,35 +4,18 @@
 #include <cmath>
 
 
-/*
-Shapes do include
-"Full shapes":
-Elipse, Hyperbola, Parabola
-
-"Fractioned shapes"
-CircleArc, ElipseArc, HyperbolaArc, ParabolaArc, LineSegments.
-
-
-*/
-
-// LINE: a, b, c of a x + b y + c = 0, (a,b) kept unit
-
-// LINE_SEGMENT: x0, y0, x1, y1, rest is calculated on the fly
-
-// ELIPSE: x0, y0, a, b, theta, the elipse can be rotated.
-//         makeElipse appends cos(theta), sin(theta): they never change after
-//         construction, and the hot path would otherwise pay for them twice a bounce
-
-// ELIPSE_ARC: x0, y0, a, b, theta, phi0, phi1. phi0/1 are the beginning/end of the arc in radians, follwing the trigonometry configuration
-
-
-
-enum ObjectType { LINE = 0, 
+// the shape says where contact happens, the response says what contact does
+enum ObjectType { LINE = 0,
                   LINE_SEGMENT = 1,
                   ELIPSE = 2,
-                  ELIPSE_ARC = 3}; // Line for now, but will include Cicle, LineSegment, 
+                  ELIPSE_ARC = 3};
+
+enum Response { REFLECT = 0,   // mirror the velocity about the normal
+                PORTAL = 1};   // move the particle to the partner named in q
+
 struct Object {
     int type;
+    int response;
     double p[13]; // LINE:         a, b, c of a x + b y + c = 0, (a,b) kept unit
                   // LINE_SEGMENT: x0, y0, x1, y1
                   // ELIPSE:       x0, y0, a, b, theta, cos(theta), sin(theta)
@@ -41,6 +24,14 @@ struct Object {
                   //
                   // an arc's first seven slots are byte for byte an ELIPSE, which is
                   // why every elipse* function below reads an arc without conversion
+
+    double q[9];  // PORTAL: a0x, a0y, a1x, a1y  this portal's own frame
+                  //         b0x, b0y, b1x, b1y  the frame it leads to
+                  //         flip               +1 pass through, -1 exit the front
+                  //
+                  // the partner is held as coordinates, never as an index into the
+                  // object array: nothing to dereference on the device, and the
+                  // objects can be listed in any order
 };
 
 #ifdef _OPENMP
@@ -49,7 +40,6 @@ struct Object {
 
 // ------------------------------------------------------------- 0. ballistics
 
-// ballistic trajectory state
 inline state trajectory(state s, double t) {
     return {s.x + s.vx * t,
             s.y + s.vy * t - 0.5 * g * t * t,
@@ -59,7 +49,7 @@ inline state trajectory(state s, double t) {
 
 // ---------------------------------------------------------- 1. root finding
 
-// just check the smaller root
+// the smaller of two candidate times that is still ahead of us
 inline double firstRoot(double t1, double t2) {
     double t = MAGIC_NO_COLLISION;
     if (t1 > deadTime && t1 < t) t = t1;
@@ -70,11 +60,11 @@ inline double firstRoot(double t1, double t2) {
 // Find quadratic roots of A t^2 + B t + C, returning MAGIC_NO_COLLISION if none exist
 inline vector2D quadRoots(double A, double B, double C) {
 
-    // an early "return {CONST, CONST};" in device code and hands back zeros,
-    // which reads as a collision at t = 0 instead of no collision at all
+    // named, not written inline at each return: nvc++ 26.3 miscompiles an early
+    // "return {CONST, CONST};" in device code and hands back zeros, which read as
+    // a collision at t = 0 instead of no collision at all
     vector2D none = {MAGIC_NO_COLLISION, MAGIC_NO_COLLISION};
 
-    // special cases
     if (A == 0.0) {
         if (B == 0.0) return none;
         return {-C / B, MAGIC_NO_COLLISION};
@@ -197,8 +187,9 @@ inline Roots quartRoots(double A4, double A3, double A2, double A1, double A0) {
     }
 
     // Ferrari alone lands only within ~1e-5 of the root once the resolvent is
-    // ill conditioned, which is far coarser than deadTime and would let a
-    // particle slip through a wall. two Newton steps restore full precision;
+    // ill conditioned, far coarser than deadTime and enough to let a particle
+    // slip through a wall. two Newton steps reach machine precision; a third
+    // measurably buys nothing
     int kept = 0;
     for (int i = 0; i < out.n; ++i) {
         double t = out.t[i];
@@ -226,20 +217,22 @@ inline Roots quartRoots(double A4, double A3, double A2, double A1, double A0) {
 
 // ------------------------------------------------------------------ 2. makers
 
+// each maker names its response rather than leaning on REFLECT being zero
+
 // scale the coefficients so that (a, b) is the unit normal
 inline Object makeLine(double a, double b, double c) {
     double len = sqrt(a * a + b * b);
-    return {LINE, {a / len, b / len, c / len}};
+    return {LINE, REFLECT, {a / len, b / len, c / len}, {}};
 }
 
 // the endpoints are the whole story: the line through them is rebuilt on the fly
 inline Object makeLineSegment(double x0, double y0, double x1, double y1) {
-    return {LINE_SEGMENT, {x0, y0, x1, y1}};
+    return {LINE_SEGMENT, REFLECT, {x0, y0, x1, y1}, {}};
 }
 
 // theta rotates the ellipse counterclockwise. its cosine and sine are stored
 inline Object makeElipse(double x0, double y0, double a, double b, double theta) {
-    return {ELIPSE, {x0, y0, a, b, theta, cos(theta), sin(theta)}};
+    return {ELIPSE, REFLECT, {x0, y0, a, b, theta, cos(theta), sin(theta)}, {}};
 }
 
 // the arc runs counterclockwise from phi0 to phi1, in the ellipse's own frame.
@@ -249,8 +242,36 @@ inline Object makeElipse(double x0, double y0, double a, double b, double theta)
 // host's bit for bit
 inline Object makeElipseArc(double x0, double y0, double a, double b, double theta,
                             double phi0, double phi1) {
-    return {ELIPSE_ARC, {x0, y0, a, b, theta, cos(theta), sin(theta),
-                         phi0, phi1, cos(phi0), sin(phi0), cos(phi1), sin(phi1)}};
+    return {ELIPSE_ARC, REFLECT, {x0, y0, a, b, theta, cos(theta), sin(theta),
+                                  phi0, phi1, cos(phi0), sin(phi0), cos(phi1), sin(phi1)},
+            {}};
+}
+
+// ----------------------------------------------------------------- 2a. portals
+
+// contact moves the particle to the named frame instead of reflecting it.
+// flip = +1 carries it out the far side, -1 out the partner's front face.
+//
+// segments only: an endless line has no endpoints to take a frame from.
+//
+// the pair must be the same size, or the map would stretch position along the
+// surface while leaving velocity alone. rather than trust the caller, the exit
+// is rebuilt at this portal's length -- b1 gives the direction, not the reach
+inline Object asPortal(Object o, double b0x, double b0y, double b1x, double b1y,
+                       double flip) {
+    double ax = o.p[2] - o.p[0], ay = o.p[3] - o.p[1];
+    double len = sqrt(ax * ax + ay * ay);
+    double bx = b1x - b0x, by = b1y - b0y;
+    double blen = sqrt(bx * bx + by * by);
+
+    o.response = PORTAL;
+    o.q[0] = o.p[0]; o.q[1] = o.p[1]; o.q[2] = o.p[2]; o.q[3] = o.p[3];
+    o.q[4] = b0x;
+    o.q[5] = b0y;
+    o.q[6] = b0x + len * bx / blen;
+    o.q[7] = b0y + len * by / blen;
+    o.q[8] = flip;
+    return o;
 }
 
 // ------------------------------------------------------------------ 3. lines
@@ -286,7 +307,7 @@ inline Object segmentLine(Object o) {
     return makeLine(y0 - y1, x1 - x0, x0 * y1 - x1 * y0);
 }
 
-// Jump to segment
+// is the impact point between the endpoints? u runs 0 at one, 1 at the other
 inline bool onSegment(Object o, double t, state s) {
     state at = trajectory(s, t);
     double dx = o.p[2] - o.p[0], dy = o.p[3] - o.p[1];
@@ -294,7 +315,8 @@ inline bool onSegment(Object o, double t, state s) {
     return u >= 0.0 && u <= 1.0;
 }
 
-// the line's own roots, minus the ones that land off the ends. Both are needed:
+// the line's own roots, minus the ones landing off the ends. both are needed:
+// the earlier root can sail past an endpoint while the later one lands
 inline double segmentHitTime(Object o, state s) {
     Object l = segmentLine(o);
     vector2D r = lineRoots(l.p[0], l.p[1], l.p[2], s);

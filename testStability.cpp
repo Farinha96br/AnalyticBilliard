@@ -27,6 +27,7 @@ struct Stats {
     double timeErr[NCHECK]; // naive elapsed time vs a Kahan-compensated sum
     double minDt;           // smallest gap between collisions
     long long tinyDt;       // how many were within 10*deadTime of zero
+    long long portals;      // teleports taken
     long long escapes;      // left the box
     long long inElipse;     // got inside the solid obstacle
     long long offArc;       // touched the arc's ellipse outside the arc itself
@@ -67,11 +68,12 @@ int main() {
 #pragma omp parallel for schedule(static)
 #endif
     for (int i = 0; i < NPART; ++i) {
-        Row *rows = new Row[CHUNK + 1];
+        Row *rows = new Row[2 * CHUNK + 1]; // a portal event costs two rows
         Stats &S = st[i];
         for (int c = 0; c < NCHECK; ++c) { S.maxdE[c] = 0.0; S.timeErr[c] = 0.0; }
         S.minDt = 1e300;
         S.tinyDt = S.escapes = S.inElipse = S.offArc = S.backwards = S.bounces = 0;
+        S.portals = 0;
 
         state s = init[i];
         double E0 = 0.5 * (s.vx * s.vx + s.vy * s.vy) + g * s.y;
@@ -81,12 +83,19 @@ int main() {
         int check = 0;
 
         for (long long c = 0; c < nChunks; ++c) {
-            int n = getCollisionStates(s, objs, nObj, CHUNK, rows);
+            int n = getCollisionStates(s, objs, nObj, CHUNK, rows, 2 * CHUNK + 1);
             if (n < CHUNK + 1) break; // hit MAGIC_NO_COLLISION and gave up early
 
             for (int k = 1; k < n; ++k) {
                 Row w = rows[k];
                 double dt = w.t - rows[k - 1].t;
+
+                // a portal writes its arrival and its departure at the same instant,
+                // so dt == 0 there by construction and says nothing about stalling.
+                // skip the pair rather than let it dominate minDt
+                bool jump = (dt == 0.0 && (w.x != rows[k - 1].x || w.y != rows[k - 1].y));
+                if (jump) { ++S.portals; continue; }
+
                 if (dt < S.minDt) S.minDt = dt;
                 if (dt <= 10.0 * deadTime) ++S.tinyDt;
                 if (dt <= 0.0) ++S.backwards;

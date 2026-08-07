@@ -19,6 +19,7 @@ from matplotlib.patches import Arc, Ellipse
 
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#f4c72e", "#00420d"]  # categorical slots 1-5
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#dcdbd5", "#fcfcfb"
+PORTAL = "#8b5cf6"  # portals are not walls, so they do not get the wall colour
 
 
 def load(path):
@@ -80,6 +81,13 @@ def draw_scene(ax, scene):
             ax.add_patch(Arc((cx, cy), 2 * a, 2 * b, angle=np.degrees(th),
                              theta1=np.degrees(phi0), theta2=np.degrees(phi1),
                              ec=MUTED, lw=2, zorder=1))
+        elif kind == "portal":  # entry frame, then a dotted link to where it leads
+            a0x, a0y, a1x, a1y, b0x, b0y, b1x, b1y, _flip = p
+            ax.plot([a0x, a1x], [a0y, a1y], color=PORTAL, lw=3,
+                    solid_capstyle="butt", zorder=5)
+            ax.plot([(a0x + a1x) / 2, (b0x + b1x) / 2],
+                    [(a0y + a1y) / 2, (b0y + b1y) / 2],
+                    color=PORTAL, lw=0.8, ls=":", alpha=0.6, zorder=1)
         elif kind == "circle":
             ax.add_patch(plt.Circle((p[0], p[1]), p[2], fill=False,
                                     ec=MUTED, lw=2, zorder=1))

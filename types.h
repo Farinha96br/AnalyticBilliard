@@ -4,19 +4,14 @@
 // no virtuals, no pointers inside
 
 struct vector2D {
-    /*
-    simple 2d vector to return two values
-    */
     double x, y;
 };
 
 struct Roots {
-    /*
-    up to four real roots. a quadratic fills two and a quartic four, so the
-    count travels with the values instead of a sentinel per slot
-    */
+    // a quadratic fills two and a quartic four, so the count travels with the
+    // values instead of a sentinel per slot
     double t[4];
-    int n; // how many entries of t[] are valid
+    int n;
 };
 
 struct state {
@@ -31,11 +26,10 @@ struct Row {
     double t, x, y, vx, vy;
 };
 
-// constexpr so the values exist on the device at compile time
-// (a mutable global would live in host memory only)
-// gravity, pulling towards -y. overridable at build time (-DGRAVITY=0.0) because
-// a billiard without gravity is integrable, and those conserved quantities are the
-// sharpest test there is that a new shape reflects correctly
+// constexpr so the values reach the device: a mutable global would live in host
+// memory only. gravity is overridable at build time (-DGRAVITY=0.0) because a
+// billiard without it is integrable, and those conserved quantities are the
+// sharpest test that a new shape reflects correctly
 #ifndef GRAVITY
 #define GRAVITY 1.0
 #endif
