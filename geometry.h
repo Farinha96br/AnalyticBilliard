@@ -4,35 +4,17 @@
 #include <cmath>
 
 
-/*
-Shapes do include
-"Full shapes":
-Elipse, Hyperbola, Parabola
-
-"Fractioned shapes"
-CircleArc, ElipseArc, HyperbolaArc, ParabolaArc, LineSegments.
-
-
-*/
-
-// LINE: a, b, c of a x + b y + c = 0, (a,b) kept unit
-
-// LINE_SEGMENT: x0, y0, x1, y1, rest is calculated on the fly
-
-// ELIPSE: x0, y0, a, b, theta, the elipse can be rotated.
-//         makeElipse appends cos(theta), sin(theta): they never change after
-//         construction, and the hot path would otherwise pay for them twice a bounce
-
-// ELIPSE_ARC: x0, y0, a, b, theta, phi0, phi1. phi0/1 are the beginning/end of the arc in radians, follwing the trigonometry configuration
-
-
-
-enum ObjectType { LINE = 0, 
+enum ObjectType { LINE = 0,
                   LINE_SEGMENT = 1,
                   ELIPSE = 2,
-                  ELIPSE_ARC = 3}; // Line for now, but will include Cicle, LineSegment, 
+                  ELIPSE_ARC = 3};
+
+enum Response { REFLECT = 0,
+                PORTAL = 1};
+
 struct Object {
     int type;
+    int response;
     double p[13]; // LINE:         a, b, c of a x + b y + c = 0, (a,b) kept unit
                   // LINE_SEGMENT: x0, y0, x1, y1
                   // ELIPSE:       x0, y0, a, b, theta, cos(theta), sin(theta)
@@ -41,6 +23,13 @@ struct Object {
                   //
                   // an arc's first seven slots are byte for byte an ELIPSE, which is
                   // why every elipse* function below reads an arc without conversion
+
+    double q[10]; // PORTAL: a0x, a0y, a1x, a1y  this portal's own frame
+                  //         b0x, b0y, b1x, b1y  the frame it leads to
+                  //         flipNormal, flipTangent
+                  //
+                  // the partner is held as coordinates, never as an index: nothing
+                  // to dereference on the device
 };
 
 #ifdef _OPENMP
@@ -49,7 +38,6 @@ struct Object {
 
 // ------------------------------------------------------------- 0. ballistics
 
-// ballistic trajectory state
 inline state trajectory(state s, double t) {
     return {s.x + s.vx * t,
             s.y + s.vy * t - 0.5 * g * t * t,
@@ -59,7 +47,6 @@ inline state trajectory(state s, double t) {
 
 // ---------------------------------------------------------- 1. root finding
 
-// just check the smaller root
 inline double firstRoot(double t1, double t2) {
     double t = MAGIC_NO_COLLISION;
     if (t1 > deadTime && t1 < t) t = t1;
@@ -67,14 +54,13 @@ inline double firstRoot(double t1, double t2) {
     return t;
 }
 
-// Find quadratic roots of A t^2 + B t + C, returning MAGIC_NO_COLLISION if none exist
 inline vector2D quadRoots(double A, double B, double C) {
 
-    // an early "return {CONST, CONST};" in device code and hands back zeros,
-    // which reads as a collision at t = 0 instead of no collision at all
+    // named, not written inline at each return: nvc++ 26.3 miscompiles an early
+    // "return {CONST, CONST};" in device code and hands back zeros, which read as
+    // a collision at t = 0 instead of no collision at all
     vector2D none = {MAGIC_NO_COLLISION, MAGIC_NO_COLLISION};
 
-    // special cases
     if (A == 0.0) {
         if (B == 0.0) return none;
         return {-C / B, MAGIC_NO_COLLISION};
@@ -83,26 +69,23 @@ inline vector2D quadRoots(double A, double B, double C) {
     double disc = B * B - 4.0 * A * C;
     if (disc < 0.0) return none;
 
-    // stable form: compute q with the sign of B, so B + sq never cancels;
-    // one root is q/A, the other C/q
+    // q takes the sign of B so that B + sq never cancels
     double sq = sqrt(disc);
     if (B < 0.0) {
         sq = -sq;
     }
     double q = -0.5 * (B + sq);
-    if (q == 0.0) { // only when C is exactly 0: the roots are 0 and -B/A
+    if (q == 0.0) { // only when C is exactly 0
         return {0.0, -B / A};
     }
     return {q / A, C / q};
 }
 
-// smallest root > deadTime of A t^2 + B t + C
 inline double firstQuadRoot(double A, double B, double C) {
     vector2D r = quadRoots(A, B, C);
     return firstRoot(r.x, r.y);
 }
 
-// the same idea as firstRoot, for the variable-length list a quartic returns
 inline double firstRootN(Roots r) {
     double t = MAGIC_NO_COLLISION;
     for (int i = 0; i < r.n; ++i) {
@@ -112,20 +95,18 @@ inline double firstRootN(Roots r) {
 }
 
 
-// a positive real root of the monic cubic m^3 + B m^2 + C m + D, for a cubic
-// that is negative at zero. Ferrari's resolvent always is, so a root above zero
-// is guaranteed to exist and that is the only caller.
-// Cauchy's bound sits above every root, so starting there and walking down finds
-// the largest one first, which keeps the q/s division in Ferrari well scaled.
-// Newton does the walking and bisection catches it whenever it leaves the
-// bracket, which makes convergence unconditional
+// a positive real root of m^3 + B m^2 + C m + D, for a cubic negative at zero.
+// Ferrari's resolvent always is, and is the only caller. starting from Cauchy's
+// bound and walking down finds the largest root first, which keeps the q/s
+// division in Ferrari well scaled; bisection catches Newton whenever it leaves
+// the bracket, making convergence unconditional
 inline double cubicRootAboveZero(double B, double C, double D) {
     double lo = 0.0; // f(0) = D < 0 by precondition
     double hi = 1.0 + fabs(B);
     if (fabs(C) > hi - 1.0) hi = 1.0 + fabs(C);
     if (fabs(D) > hi - 1.0) hi = 1.0 + fabs(D);
 
-    double m = hi; // above every root, where the cubic is positive
+    double m = hi;
     for (int k = 0; k < 200; ++k) {
         double f = ((m + B) * m + C) * m + D;
         if (f > 0.0) hi = m; else lo = m; // keep f(lo) <= 0 <= f(hi)
@@ -176,10 +157,9 @@ inline Roots quartRoots(double A4, double A3, double A2, double A1, double A0) {
             }
         }
     } else {
-        // factor into (z^2 + s z + u)(z^2 - s z + w). matching coefficients gives
-        // u + w = p + s^2, w - u = q/s, u w = r, and eliminating u and w leaves
-        // this cubic in m = s^2. at m = 0 it equals -q^2 < 0 and grows without
-        // bound, so a positive root always exists
+        // factor into (z^2 + s z + u)(z^2 - s z + w); eliminating u and w leaves
+        // this cubic in m = s^2, which is -q^2 < 0 at the origin and unbounded
+        // above, so a positive root always exists
         double m = cubicRootAboveZero(2.0 * p, p * p - 4.0 * r, -q * q);
         if (m <= 0.0) return out;
 
@@ -187,7 +167,6 @@ inline Roots quartRoots(double A4, double A3, double A2, double A1, double A0) {
         double u = ((p + m) - q / s) / 2.0;
         double w = ((p + m) + q / s) / 2.0;
 
-        // quadRoots again rather than a second copy of its cancellation-safe form
         vector2D r1 = quadRoots(1.0, s, u);
         vector2D r2 = quadRoots(1.0, -s, w);
         double z[4] = {r1.x, r1.y, r2.x, r2.y};
@@ -196,24 +175,23 @@ inline Roots quartRoots(double A4, double A3, double A2, double A1, double A0) {
         }
     }
 
-    // Ferrari alone lands only within ~1e-5 of the root once the resolvent is
-    // ill conditioned, which is far coarser than deadTime and would let a
-    // particle slip through a wall. two Newton steps restore full precision;
+    // Ferrari alone lands only within ~1e-5 once the resolvent is ill conditioned,
+    // coarse enough to let a particle slip through a wall. two Newton steps reach
+    // machine precision; a third measurably buys nothing
     int kept = 0;
     for (int i = 0; i < out.n; ++i) {
         double t = out.t[i];
         for (int k = 0; k < 2; ++k) {
             double F = (((A4 * t + A3) * t + A2) * t + A1) * t + A0;
             double dF = ((4.0 * A4 * t + 3.0 * A3) * t + 2.0 * A2) * t + A1;
-            if (dF == 0.0) break; // a double root: already as good as it gets
+            if (dF == 0.0) break; // a double root
             t -= F / dF;
         }
 
-        // and then check it really is a root. on a near miss the factorisation
-        // can hand back a value that never crossed zero, and Newton merely parks
-        // it near a minimum of F; accepting that invents a collision out of thin
-        // air and teleports the particle onto the surface. the residual is the
-        // only thing that tells a true crossing from a graze
+        // on a near miss the factorisation can hand back a value that never
+        // crossed zero, and Newton merely parks it near a minimum of F. accepting
+        // that invents a collision and teleports the particle onto the surface,
+        // so the residual has the final say
         double F = (((A4 * t + A3) * t + A2) * t + A1) * t + A0;
         double m = fabs(t);
         double scale = (((fabs(A4) * m + fabs(A3)) * m + fabs(A2)) * m + fabs(A1)) * m + fabs(A0);
@@ -229,33 +207,31 @@ inline Roots quartRoots(double A4, double A3, double A2, double A1, double A0) {
 // scale the coefficients so that (a, b) is the unit normal
 inline Object makeLine(double a, double b, double c) {
     double len = sqrt(a * a + b * b);
-    return {LINE, {a / len, b / len, c / len}};
+    return {LINE, REFLECT, {a / len, b / len, c / len}, {}};
 }
 
-// the endpoints are the whole story: the line through them is rebuilt on the fly
 inline Object makeLineSegment(double x0, double y0, double x1, double y1) {
-    return {LINE_SEGMENT, {x0, y0, x1, y1}};
+    return {LINE_SEGMENT, REFLECT, {x0, y0, x1, y1}, {}};
 }
 
-// theta rotates the ellipse counterclockwise. its cosine and sine are stored
 inline Object makeElipse(double x0, double y0, double a, double b, double theta) {
-    return {ELIPSE, {x0, y0, a, b, theta, cos(theta), sin(theta)}};
+    return {ELIPSE, REFLECT, {x0, y0, a, b, theta, cos(theta), sin(theta)}, {}};
 }
 
-// the arc runs counterclockwise from phi0 to phi1, in the ellipse's own frame.
-// the endpoint directions are turned into cosines and sines here, on the host,
-// so that onArc can decide containment with sign tests alone: an atan2 in the
-// hot path would be a transcendental on the device, and those do not match the
+// counterclockwise from phi0 to phi1, in the ellipse's own frame. the endpoint
+// cosines and sines are taken here, on the host, so onArc can decide containment
+// with sign tests alone: a transcendental on the device would not match the
 // host's bit for bit
 inline Object makeElipseArc(double x0, double y0, double a, double b, double theta,
                             double phi0, double phi1) {
-    return {ELIPSE_ARC, {x0, y0, a, b, theta, cos(theta), sin(theta),
-                         phi0, phi1, cos(phi0), sin(phi0), cos(phi1), sin(phi1)}};
+    return {ELIPSE_ARC, REFLECT, {x0, y0, a, b, theta, cos(theta), sin(theta),
+                                  phi0, phi1, cos(phi0), sin(phi0), cos(phi1), sin(phi1)},
+            {}};
 }
 
 // ------------------------------------------------------------------ 3. lines
 
-// substitute the parabola into a x + b y + c: A t^2 + B t + C.
+// substitute the parabola into a x + b y + c: A t^2 + B t + C
 inline vector2D lineRoots(double a, double b, double c, state s) {
     return quadRoots(-0.5 * g * b,
                      a * s.vx + b * s.vy,
@@ -267,12 +243,11 @@ inline double lineHitTime(Object o, state s) {
     return firstRoot(r.x, r.y);
 }
 
-// same unit normal (a, b) everywhere (a circle's would depend on s)
 inline vector2D lineNormal(Object o, state s) {
     return {o.p[0], o.p[1]};
 }
 
-// land exactly on the line: move by minus the signed distance, along the normal
+// move by minus the signed distance, along the normal
 inline state lineSnap(Object o, state s) {
     double d = o.p[0] * s.x + o.p[1] * s.y + o.p[2];
     return {s.x - d * o.p[0], s.y - d * o.p[1], s.vx, s.vy};
@@ -280,13 +255,12 @@ inline state lineSnap(Object o, state s) {
 
 // --------------------------------------------------------------- 4. segments
 
-// the infinite line through the two endpoints, (a, b) made unit by makeLine
 inline Object segmentLine(Object o) {
     double x0 = o.p[0], y0 = o.p[1], x1 = o.p[2], y1 = o.p[3];
     return makeLine(y0 - y1, x1 - x0, x0 * y1 - x1 * y0);
 }
 
-// Jump to segment
+// u runs 0 at one endpoint, 1 at the other
 inline bool onSegment(Object o, double t, state s) {
     state at = trajectory(s, t);
     double dx = o.p[2] - o.p[0], dy = o.p[3] - o.p[1];
@@ -294,7 +268,8 @@ inline bool onSegment(Object o, double t, state s) {
     return u >= 0.0 && u <= 1.0;
 }
 
-// the line's own roots, minus the ones that land off the ends. Both are needed:
+// both roots are tested: the earlier one can sail past an endpoint while the
+// later one lands
 inline double segmentHitTime(Object o, state s) {
     Object l = segmentLine(o);
     vector2D r = lineRoots(l.p[0], l.p[1], l.p[2], s);
@@ -312,33 +287,57 @@ inline state segmentSnap(Object o, state s) {
     return lineSnap(segmentLine(o), s);
 }
 
+// --------------------------------------------------------------- 4a. portals
+
+// the two signs act on the velocity alone. WHERE the particle comes out is fixed
+// by the frames, and so by the order the partner's endpoints were written in:
+// naming it makeLineSegment(8,8, 8,2) rather than (8,2, 8,8) maps end for end.
+// that also turns the tangent over, and the normal with it, so pass
+// flipNormal = -1 alongside to keep the original exit face.
+//
+// the exit takes its origin and direction from the partner but its LENGTH from
+// here, so a mismatched pair cannot stretch the particle along the surface
+inline Object asPortal(Object o, Object partner, double flipNormal,
+                       double flipTangent = 1.0) {
+    double ax = o.p[2] - o.p[0], ay = o.p[3] - o.p[1];
+    double len = sqrt(ax * ax + ay * ay);
+
+    double bx = partner.p[2] - partner.p[0], by = partner.p[3] - partner.p[1];
+    double blen = sqrt(bx * bx + by * by);
+    double tx = bx / blen, ty = by / blen;
+    double ox = partner.p[0], oy = partner.p[1];
+
+    o.response = PORTAL;
+    o.q[0] = o.p[0]; o.q[1] = o.p[1]; o.q[2] = o.p[2]; o.q[3] = o.p[3];
+    // a whole length out, not one unit: frameFromPoints normalises whatever it is
+    // handed, and normalising a unit vector is not the identity in floating point
+    o.q[4] = ox;                o.q[5] = oy;
+    o.q[6] = ox + len * tx;     o.q[7] = oy + len * ty;
+    o.q[8] = flipNormal;
+    o.q[9] = flipTangent;
+    return o;
+}
+
 // --------------------------------------------------------------- 5. elipses
 
-// an ellipse is the first shape whose own equation is quadratic, so feeding the
-// parabola into it leaves a quartic in t rather than the quadratic every shape
-// above reduces to. everything here works in the ellipse's own frame, where the
-// boundary is just u^2/a^2 + v^2/b^2 = 1
+// everything here works in the ellipse's own frame, where the boundary is just
+// u^2/a^2 + v^2/b^2 = 1
 
-// world point -> the frame in which the ellipse is axis aligned and centred
 inline vector2D elipseLocal(Object o, double x, double y) {
     double c = o.p[5], s = o.p[6];
     double dx = x - o.p[0], dy = y - o.p[1];
     return {c * dx + s * dy, -s * dx + c * dy};
 }
 
-// the reverse trip, for a direction (no centre offset) or a point (with one)
 inline vector2D elipseToWorld(Object o, double u, double v, bool isPoint) {
     double c = o.p[5], s = o.p[6];
     return {c * u - s * v + (isPoint ? o.p[0] : 0.0),
             s * u + c * v + (isPoint ? o.p[1] : 0.0)};
 }
 
-// substitute the parabola into u^2/a^2 + v^2/b^2 - 1. both u and v are quadratic
-// in t, so their squares are quartic. A0 is where the particle starts: negative
-// inside the ellipse, positive outside, which is why neither case needs its own
-// branch -- the roots come out the same way regardless
-// kept apart from elipseHitTime so an arc can look at every root before one is
-// chosen, exactly as lineRoots is kept apart for the segment's sake
+// u and v are both quadratic in t, so their squares are quartic. A0 is negative
+// inside the ellipse and positive outside, which is why neither case needs its
+// own branch. kept apart from elipseHitTime so an arc can see every root
 inline Roots elipseRoots(Object o, state s) {
     double c = o.p[5], sn = o.p[6];
     double ia = 1.0 / (o.p[2] * o.p[2]), ib = 1.0 / (o.p[3] * o.p[3]);
@@ -363,13 +362,13 @@ inline vector2D elipseNormal(Object o, state s) {
     vector2D l = elipseLocal(o, s.x, s.y);
     double nu = l.x / (o.p[2] * o.p[2]), nv = l.y / (o.p[3] * o.p[3]);
     double len = sqrt(nu * nu + nv * nv);
-    if (len == 0.0) return {0.0, 0.0}; // dead centre: no surface to speak of
+    if (len == 0.0) return {0.0, 0.0}; // dead centre
     return elipseToWorld(o, nu / len, nv / len, false);
 }
 
-// pull the point back onto the boundary along its own radius. that is not the
-// nearest point on the ellipse -- finding that is another quartic -- but it lands
-// exactly on the curve and differs only to second order, which is all this is for
+// back onto the boundary along its own radius. not the nearest point on the
+// ellipse -- that is another quartic -- but exactly on the curve, and differing
+// only to second order
 inline state elipseSnap(Object o, state s) {
     vector2D l = elipseLocal(o, s.x, s.y);
     double ia = 1.0 / (o.p[2] * o.p[2]), ib = 1.0 / (o.p[3] * o.p[3]);
@@ -381,20 +380,11 @@ inline state elipseSnap(Object o, state s) {
 
 // ----------------------------------------------------------- 6. elipse arcs
 
-// an arc is the ellipse carrying it, plus an angular bound: the roots come from
-// the ellipse untouched and only the ones landing between phi0 and phi1 survive,
-// the same division of labour a segment has with its line
-
-// is the impact point inside the arc's span?
-//
-// on the ellipse u^2/a^2 + v^2/b^2 = 1, so (u/a, v/b) is already (cos phi, sin phi)
-// and the parametric angle needs no inverse trig to reach. it is left unnormalised
-// on purpose: scaling by a positive number cannot flip the sign of a cross product,
-// and only signs are read below.
-//
-// atan2 would say the same thing in one line, and is deliberately not used: it is
-// not correctly rounded, the device's version disagrees with glibc's in the last
-// bits, and that alone would cost the CPU and GPU their bit-for-bit agreement
+// on the ellipse (u/a, v/b) is already (cos phi, sin phi), so the parametric
+// angle needs no inverse trig. left unnormalised on purpose: a positive scale
+// cannot flip the sign of a cross product, and only signs are read below.
+// atan2 would say the same in one line and is deliberately not used -- it is not
+// correctly rounded, and the device's disagrees with glibc's in the last bits
 inline bool onArc(Object o, double t, state s) {
     state at = trajectory(s, t);
     vector2D l = elipseLocal(o, at.x, at.y);
@@ -412,9 +402,8 @@ inline bool onArc(Object o, double t, state s) {
     return cr0 >= 0.0 || cr1 >= 0.0;
 }
 
-// the ellipse's roots, minus the ones landing off the ends. all of them have to be
-// tested, not just the earliest: a particle coming in through the open side misses
-// the arc on the near root and lands on it on the far one
+// all the roots are tested, not just the earliest: a particle coming in through
+// the open side misses the arc on the near root and lands on it on the far one
 inline double elipseArcHitTime(Object o, state s) {
     Roots r = elipseRoots(o, s);
     int kept = 0;
@@ -425,14 +414,12 @@ inline double elipseArcHitTime(Object o, state s) {
     return firstRootN(r);
 }
 
-// no conversion needed: an arc's first seven parameters are an ellipse already
 inline vector2D elipseArcNormal(Object o, state s) { return elipseNormal(o, s); }
 
 inline state elipseArcSnap(Object o, state s) { return elipseSnap(o, s); }
 
 // --------------------------------------------------------------- 7. dispatch
 
-// time at which the trajectory meets the object, MAGIC_NO_COLLISION if never
 inline double hitTime(Object o, state s) {
     switch (o.type) {
     case LINE: return lineHitTime(o, s);
@@ -443,7 +430,6 @@ inline double hitTime(Object o, state s) {
     return MAGIC_NO_COLLISION;
 }
 
-// unit normal at the contact point
 inline vector2D normalAt(Object o, state s) {
     switch (o.type) {
     case LINE: return lineNormal(o, s);
