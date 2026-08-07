@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Visualize the bouncing table produced by Plane.cpp.
+"""Plot a collision table: the scene from its '# ...' header rows, then the
+arcs between collisions, rebuilt from the closed form the simulation solves.
 
-    ./plane > collisions.dat && python3 plot_plane.py collisions.dat
-
-The scene is read from the '# line a b c' header rows the program emits.
-The table only stores collisions, so the arcs between them are rebuilt from
-the same closed form the simulation solves -- sampling here is for drawing only.
+    ./box > collisions.dat && python3 plotBox.py collisions.dat
 """
 
 import argparse
@@ -20,16 +17,12 @@ from matplotlib.patches import Arc, Ellipse
 
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#f4c72e", "#00420d"]  # categorical slots 1-5
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#dcdbd5", "#fcfcfb"
-# portals are not walls, so they do not get the wall colour. teal specifically:
-# plasma runs blue -> purple -> magenta -> orange and never passes near it, so a
-# portal cannot be mistaken for a stretch of the path lying on top of it
+# teal: plasma never passes near it, so a portal cannot be mistaken for a
+# stretch of path lying on top of it
 PORTAL = "#0d9488"
 
-# one path crosses itself over and over, and nothing about a uniform stroke says
-# which pass came first. colouring by time does: every arc carries its own place
-# in the run, and the colorbar turns that back into a collision number.
-# plasma stops at 0.85 because its last stretch is a pale yellow that vanishes
-# against SURFACE -- the late arcs are exactly the ones that must stay legible
+# stops at 0.85: plasma's last stretch is a pale yellow that vanishes against
+# SURFACE, and the late arcs are the ones that must stay legible
 TIME_CMAP = LinearSegmentedColormap.from_list(
     "plasma_dark", plt.cm.plasma(np.linspace(0.0, 0.85, 256)))
 
@@ -60,12 +53,10 @@ def draw(ax, rows, grav, color, label, mark_start=True, mark_end=True,
          arrow_every=1, cmap=None):
     """one particle: its flight path, then the collisions on top
 
-    with a cmap the path is coloured by how far through the run each arc is,
-    which is the only thing that makes a single self-crossing path readable.
-    without one every arc takes `color`, so several particles stay told apart --
-    a colour that meant time and particle at once would mean neither.
+    with a cmap the path is coloured by time, the only thing that makes a single
+    self-crossing path readable. without one every arc takes `color`, so several
+    particles stay told apart -- one colour cannot mean both at once.
     """
-    # how far through the run each row is: 0 at the start, 1 at the final state.
     # arc i leaves row i, so the two share an index and take the same colour
     age = np.linspace(0.0, 1.0, len(rows))
     hue = (lambda k: cmap(age[k])) if cmap else (lambda k: color)
@@ -75,10 +66,8 @@ def draw(ax, rows, grav, color, label, mark_start=True, mark_end=True,
         ax.plot(px, py, color=hue(i), lw=1.7, solid_capstyle="round",
                 label=label if i == 0 else None, zorder=2, alpha=0.9)
 
-        # which way along the arc the particle went. the head is sized in points,
-        # so it stays legible on a short hop and does not swamp a long one.
-        # a teleport pair spans no time at all, leaving every sample on the same
-        # spot with no direction to draw -- skip those
+        # a teleport pair spans no time, leaving every sample on one spot with
+        # no direction to draw -- skip those
         if arrow_every and i % arrow_every == 0:
             m = len(px) // 2
             if px[m] != px[m + 1] or py[m] != py[m + 1]:
@@ -90,10 +79,8 @@ def draw(ax, rows, grav, color, label, mark_start=True, mark_end=True,
     ax.scatter(rows[1:, 1], rows[1:, 2], s=16,
                c=(cmap(age[1:]) if cmap else color),
                edgecolors=SURFACE, linewidths=0.8, zorder=3)
-    # the ends of whatever slice was handed in. in the top panel that is the
-    # initial condition and wherever the window was cut; in the bottom, wherever
-    # it was cut and the final state. between them they say which way to read the
-    # path, which the collision dots alone cannot
+    # the ends of whatever slice was handed in; between them they say which way
+    # to read the path, which the collision dots alone cannot
     if mark_start:
         ax.plot(rows[0, 1], rows[0, 2], "*", ms=14, color=hue(0),
                 mec=INK, mew=0.8, zorder=4)
@@ -145,10 +132,9 @@ def draw_scene(ax, scene):
             ax.plot([(a0x + a1x) / 2, (b0x + b1x) / 2],
                     [(a0y + a1y) / 2, (b0y + b1y) / 2],
                     color=PORTAL, lw=0.8, ls=":", alpha=0.6, zorder=1)
-            # which way u runs on each side, and so which end maps to which. the
-            # two frames carry that on their own: the flips move the velocity and
-            # never the position, so neither belongs in these arrows. arrows that
-            # oppose mean the partner's endpoints were written the other way round
+            # which way u runs on each side. the flips move the velocity and
+            # never the position, so neither belongs here. arrows that oppose
+            # mean the partner's endpoints were written the other way round
             _sense(ax, a0x, a0y, a1x, a1y, 1.0)
             _sense(ax, b0x, b0y, b1x, b1y, 1.0)
         elif kind == "circle":
@@ -174,9 +160,7 @@ def main():
 
     fig, axes = plt.subplots(2, 1, figsize=(9, 8), facecolor=SURFACE)
 
-    # top: the first N collisions from the initial condition;
-    # bottom: the last N recorded, where any long-run drift would show.
-    # both are starred at their first row, so a path can be picked up in either
+    # first N from the initial condition, then the last N, where drift would show
     panels = [
         (axes[0], slice(None, args.bounces + 1),
          f"First {args.bounces} collisions   * the initial condition, "
@@ -185,9 +169,7 @@ def main():
          f"Last {args.bounces} collisions   * where the window begins, "
          f"\u25a0 the final state"),
     ]
-    # with a single path there is no particle to tell apart, so the colour is
-    # free to carry time instead -- which is the one thing a still picture of a
-    # path that crosses itself cannot otherwise say
+    # with one path there is no particle to tell apart, so colour carries time
     solo = len(ids) == 1
 
     for ax, rows_of, title in panels:
@@ -199,15 +181,14 @@ def main():
                  mark_end=True, arrow_every=args.arrows,
                  cmap=TIME_CMAP if solo else None)
 
-            # the two panels are different windows on the same run, so each
-            # colorbar is labelled with the row numbers it actually covers
+            # different windows on the same run, so each bar is labelled with
+            # the rows it covers
             if solo:
                 first = np.arange(len(tracks[i]))[rows_of]
                 bar = fig.colorbar(plt.cm.ScalarMappable(
                     Normalize(first[0], first[-1]), TIME_CMAP),
                     ax=ax, pad=0.015, fraction=0.03, aspect=12)
-                # row, not collision: a portal crossing writes two of them, the
-                # arrival and the departure, against the one instant
+                # row, not collision: a portal writes two against one instant
                 bar.set_label("row #", color=MUTED)
                 bar.ax.tick_params(colors=MUTED, length=0)
                 bar.outline.set_visible(False)
@@ -224,10 +205,8 @@ def main():
             ax.spines[side].set_visible(False)
     axes[1].set_xlabel("x", color=MUTED)
 
-    # one legend for both panels, below everything: the same particle keeps the
-    # same color in each. a lone particle is on the colorbar instead, and naming
-    # it "particle 0" under a bar that already says what the colour means would
-    # only invite reading the bar as a second particle
+    # one legend for both panels: the same particle keeps its colour in each. a
+    # lone particle is on the colorbar instead
     if not solo:
         handles = [Line2D([], [], color=SERIES[s], lw=1.5) for s in range(len(ids))]
         fig.legend(handles, [f"particle {i}" for i in ids], frameon=False,

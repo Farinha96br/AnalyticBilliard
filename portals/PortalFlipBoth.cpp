@@ -1,25 +1,15 @@
-// flipNormal = -1: the velocity THROUGH the surface is reversed.
-//
-//   g++ -O2 -ffp-contract=off -o portalflipnormal.out PortalFlipNormal.cpp
-//   ./portalflipnormal.out > portalflipnormal.dat
-//   python3 plotBox.py portalflipnormal.dat --out portalflipnormal.png --bounces 12 --g 1.0
-//
-// instead of carrying on out the far side, the particle leaves by the face it
-// arrived at, so it turns back into the space between the portals. the height
-// is untouched, as with every sign.
-//
-// the box, the portal positions and the opening arc are the same in every
-// portal case, so whatever differs between two of the pictures is the pair
-// itself. gravity is on, hence the arcs.
+// both signs reversed: the velocity is turned right around.
+//   g++ -O2 -ffp-contract=off -I.. -o portalflipboth.out PortalFlipBoth.cpp
+//   ./portalflipboth.out > portalflipboth.dat          (./checkHashPortal.sh does all six)
+
 #include "physics.h" // pulls in geometry.h and types.h
 #include <cstdio>
 
 int main() {
 
-    const int Niter = 25; // few enough that a single path can be followed by eye
+    const int Niter = 1e6; // a stability run; the plot only draws a window at each end
     const int Npart = 1;
 
-    // the pair, named so each can point at the other
     Object left  = makeLineSegment(-8.0, 2.0, -8.0, 8.0);
     Object right = makeLineSegment( 8.0, 2.0,  8.0, 8.0);
 
@@ -30,31 +20,31 @@ int main() {
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
 
-        // flipNormal -1, flipTangent +1: the normal velocity is reversed
-        asPortal(left, right, -1.0, 1.0),
-        asPortal(right, left, -1.0, 1.0),
+        // flipNormal -1, flipTangent -1: both components reversed, so the
+        asPortal(left, right, -1.0, -1.0),
+        asPortal(right, left, -1.0, -1.0),
     };
 
-    // the same opening arc as every other case; PortalPlain.cpp says why this
-    // one and not another
+    // PortalPlain.cpp says why this start
     state states[Npart] = {
         {-16.0, 1.0, 5.75, 4.25},
     };
 
-    // a portal event costs two rows, the arrival and the departure, so the
-    // slice is sized for the worst case of every event being one
+    // a portal event costs two rows, so size for the worst case
     const int rowsPer = 2 * Niter + 1;
     Row *rows = new Row[Npart * rowsPer];
     int counts[Npart];
 
+#ifdef _OPENMP
+#pragma omp target teams distribute parallel for \
+    map(to : states[0 : Npart], objs[0 : nObj])  \
+    map(from : rows[0 : Npart * rowsPer], counts[0 : Npart])
+#endif
     for (int i = 0; i < Npart; ++i) {
         counts[i] = getCollisionStates(states[i], objs, nObj, Niter,
                                        &rows[i * rowsPer], rowsPer);
     }
 
-    // the scene, then one row per collision. a portal's surface is described
-    // like any other object; the second record carries where it leads, which is
-    // what lets the plot draw the link and the direction arrows
     for (int k = 0; k < nObj; ++k) {
         if (objs[k].type == LINE) {
             printf("# line %.17g %.17g %.17g\n",
@@ -79,11 +69,8 @@ int main() {
         }
     }
 
-    // a teleport is the one place two rows share an instant, so it is easy to
-    // pick out. the first one each particle takes is the whole story, and its
-    // dE is the check: the signs move the velocity and never the position, so
-    // a level pair must come through at no cost at all
-    fprintf(stderr, "flipN -1  flipT +1   turns back\n");
+   
+    fprintf(stderr, "flipN -1  flipT -1   both reversed\n");
     for (int i = 0; i < Npart; ++i) {
         for (int r = 1; r < counts[i]; ++r) {
             Row a = rows[i * rowsPer + r - 1], b = rows[i * rowsPer + r];

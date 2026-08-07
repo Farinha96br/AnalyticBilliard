@@ -1,36 +1,19 @@
-// the other control: no sign changed, the partner written backwards.
-//
-//   g++ -O2 -ffp-contract=off -o portalreversedends.out PortalReversedEnds.cpp
-//   ./portalreversedends.out > portalreversedends.dat
-//   python3 plotBox.py portalreversedends.dat --out portalreversedends.png --bounces 12 --g 1.0
-//
-// PortalPlain's signs exactly, and yet the heights swap: the entry is mirrored
-// about the middle of the pair, so arriving at 5.95 it leaves at 4.05. WHERE a
-// particle emerges is decided by the order the partner's endpoints were written
-// in, never by the signs.
-//
-// this is also the only case whose energy changes, and for an honest reason:
-// the crossing genuinely lifts or drops the particle. reversing the order also
-// turns the exit face over, since the normal is the tangent turned a quarter
-// turn -- pass flipNormal = -1 as well to keep the original side.
-//
-// the box, the portal positions and the opening arc are the same in every
-// portal case, so whatever differs between two of the pictures is the pair
-// itself. gravity is on, hence the arcs.
+// flipNormal = -1: the velocity THROUGH the surface is reversed.
+
+//   g++ -O2 -ffp-contract=off -I.. -o portalflipnormal.out PortalFlipNormal.cpp
+//   ./portalflipnormal.out > portalflipnormal.dat          (./checkHashPortal.sh does all six)
+//   python3 ../plotBox.py portalflipnormal.dat --out portalflipnormal.png --bounces 12 --g 1.0
+
 #include "physics.h" // pulls in geometry.h and types.h
 #include <cstdio>
 
 int main() {
 
-    const int Niter = 25; // few enough that a single path can be followed by eye
+    const int Niter = 1e6; // a stability run; the plot only draws a window at each end
     const int Npart = 1;
 
-    // the pair, named so each can point at the other. the right-hand segment is
-    // the same one every other case uses, written the other way round -- that
-    // ordering is the whole difference here, since it is what decides which end
-    // of the partner an entry maps onto
     Object left  = makeLineSegment(-8.0, 2.0, -8.0, 8.0);
-    Object right = makeLineSegment( 8.0, 8.0,  8.0, 2.0);
+    Object right = makeLineSegment( 8.0, 2.0,  8.0, 8.0);
 
     const int nObj = 6;
     Object objs[nObj] = {
@@ -39,31 +22,32 @@ int main() {
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
 
-        // flipNormal +1, flipTangent +1: PortalPlain's signs, untouched
-        asPortal(left, right, 1.0, 1.0),
-        asPortal(right, left, 1.0, 1.0),
+        // flipNormal -1, flipTangent +1: the normal velocity is reversed
+        asPortal(left, right, -1.0, 1.0),
+        asPortal(right, left, -1.0, 1.0),
     };
 
-    // the same opening arc as every other case; PortalPlain.cpp says why this
-    // one and not another
+    // PortalPlain.cpp says why this start
     state states[Npart] = {
         {-16.0, 1.0, 5.75, 4.25},
     };
 
-    // a portal event costs two rows, the arrival and the departure, so the
-    // slice is sized for the worst case of every event being one
+    // a portal event costs two rows, so size for the worst case
     const int rowsPer = 2 * Niter + 1;
     Row *rows = new Row[Npart * rowsPer];
     int counts[Npart];
 
+#ifdef _OPENMP
+#pragma omp target teams distribute parallel for \
+    map(to : states[0 : Npart], objs[0 : nObj])  \
+    map(from : rows[0 : Npart * rowsPer], counts[0 : Npart])
+#endif
     for (int i = 0; i < Npart; ++i) {
         counts[i] = getCollisionStates(states[i], objs, nObj, Niter,
                                        &rows[i * rowsPer], rowsPer);
     }
 
-    // the scene, then one row per collision. a portal's surface is described
-    // like any other object; the second record carries where it leads, which is
-    // what lets the plot draw the link and the direction arrows
+    // a portal emits a second record saying where it leads
     for (int k = 0; k < nObj; ++k) {
         if (objs[k].type == LINE) {
             printf("# line %.17g %.17g %.17g\n",
@@ -88,10 +72,7 @@ int main() {
         }
     }
 
-    // a teleport is the one place two rows share an instant, so it is easy to
-    // pick out. unlike the four sign cases, dE here is meant to be non-zero:
-    // the particle really is set down at a different height
-    fprintf(stderr, "flipN +1  flipT +1, partner reversed   height swapped\n");
+    fprintf(stderr, "flipN -1  flipT +1   turns back\n");
     for (int i = 0; i < Npart; ++i) {
         for (int r = 1; r < counts[i]; ++r) {
             Row a = rows[i * rowsPer + r - 1], b = rows[i * rowsPer + r];

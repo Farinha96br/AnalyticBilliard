@@ -8,7 +8,7 @@ NV=/opt/nvidia/hpc_sdk/Linux_x86_64/26.3/compilers/bin/nvc++ # GPU only: g++ can
 GPUARCH=cc120 # RTX 5060 Ti. `nvaccelinfo | grep Target` if this moves
 
 # what keeps the three outputs bit for bit identical: no FMA fusion, and no
-# non-IEEE division/sqrt (-Kieee, easy to miss and enough on its own to break it)
+# non-IEEE division/sqrt (-Kieee, enough on its own to break it if missed)
 CPUREPRO="-ffp-contract=off"
 GPUREPRO="-Kieee -Mnofma"
 

@@ -1,23 +1,14 @@
 // a small scene whose only purpose is to show what a portal does.
 //
-//   g++ -O2 -ffp-contract=off -o portalsegment.out PortalSegment.cpp
-//   ./portalsegment.out > portalsegment.dat
-//   python3 plotBox.py portalsegment.dat --out portalsegment.png --bounces 8 --g 1.0
-//
-// one portal stands vertical and the other lies flat, a quarter turn apart, which
-// is where the interesting part shows: the velocity is carried across in the
-// portal's own frame, so a particle arriving level leaves falling. the pair is
-// the same size -- asPortal insists on it -- so the map is a rigid motion and a
-// particle entering at one end comes out at the matching end.
-//
-// crossing does change a particle's height, and so its potential energy. that is
-// fine for a picture; keep a pair level when the energy has to be conserved, as
-// the pair in ComplexExample.cpp is.
+//   g++ -O2 -ffp-contract=off -I.. -o portalsegment.out PortalSegment.cpp
+//   ./portalsegment.out > portalsegment.dat          (./checkHashPortal.sh does all six)
+//   python3 ../plotBox.py portalsegment.dat --out portalsegment.png --bounces 8 --g 1.0
+
 #include "physics.h"
 #include <cstdio>
 
 int main() {
-    const int Niter = 14; // few enough that a single path can be followed by eye
+    const int Niter = 1e6; 
     const int Npart = 1;
 
     Object upright = makeLineSegment(-8.0, 2.0, -8.0, 8.0);
@@ -30,15 +21,10 @@ int main() {
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
 
-        // one upright, one flat, so a crossing turns the particle by a quarter
-        // turn. both are 6 long, as they have to be, and each names the other
         asPortal(upright, flat, -1.0),
         asPortal(flat, upright, -1.0),
     };
 
-    // one particle, launched straight at the upright portal with nothing in the
-    // way, so the quarter turn is the first thing that happens to it. a second
-    // path over the top would only hide the one worth following
     state states[Npart] = {
         {-15.0, 5.0, 4.0, 2.0},
     };
@@ -47,6 +33,11 @@ int main() {
     Row *rows = new Row[Npart * rowsPer];
     int counts[Npart];
 
+#ifdef _OPENMP
+#pragma omp target teams distribute parallel for \
+    map(to : states[0 : Npart], objs[0 : nObj])  \
+    map(from : rows[0 : Npart * rowsPer], counts[0 : Npart])
+#endif
     for (int i = 0; i < Npart; ++i) {
         counts[i] = getCollisionStates(states[i], objs, nObj, Niter,
                                        &rows[i * rowsPer], rowsPer);
@@ -75,8 +66,7 @@ int main() {
         }
     }
 
-    // a teleport is the one place two rows share an instant: report them so the
-    // numbers can be checked against the picture
+
     fprintf(stderr, "particle  rows  teleports\n");
     for (int i = 0; i < Npart; ++i) {
         int jumps = 0;
