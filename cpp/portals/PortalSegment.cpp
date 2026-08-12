@@ -1,19 +1,18 @@
-// flipNormal = -1: the velocity THROUGH the surface is reversed.
+// a small scene whose only purpose is to show what a portal does.
+//
+//   g++ -O2 -ffp-contract=off -I.. -o portalsegment.out PortalSegment.cpp
+//   ./portalsegment.out > portalsegment.dat          (./checkHashPortal.sh does all six)
+//   python3 ../plotBox.py portalsegment.dat --out portalsegment.png --bounces 8 --g 1.0
 
-//   g++ -O2 -ffp-contract=off -I.. -o portalflipnormal.out PortalFlipNormal.cpp
-//   ./portalflipnormal.out > portalflipnormal.dat          (./checkHashPortal.sh does all six)
-//   python3 ../plotBox.py portalflipnormal.dat --out portalflipnormal.png --bounces 12 --g 1.0
-
-#include "physics.h" // pulls in geometry.h and types.h
+#include "physics.h"
 #include <cstdio>
 
 int main() {
-
-    const int Niter = 1e6; // a stability run; the plot only draws a window at each end
+    const int Niter = 1e4; 
     const int Npart = 1;
 
-    Object left  = makeLineSegment(-8.0, 2.0, -8.0, 8.0);
-    Object right = makeLineSegment( 8.0, 2.0,  8.0, 8.0);
+    Object upright = makeLineSegment(-8.0, 2.0, -8.0, 8.0);
+    Object flat    = makeLineSegment(2.0, 5.0, 8.0, 5.0);
 
     const int nObj = 6;
     Object objs[nObj] = {
@@ -22,18 +21,15 @@ int main() {
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
 
-        // flipNormal -1, flipTangent +1: the normal velocity is reversed
-        asPortal(left, right, -1.0, 1.0),
-        asPortal(right, left, -1.0, 1.0),
+        asPortal(upright, flat, -1.0),
+        asPortal(flat, upright, -1.0),
     };
 
-    // PortalPlain.cpp says why this start
     state states[Npart] = {
-        {-16.0, 1.0, 5.75, 4.25},
+        {-15.0, 5.0, 4.0, 2.0},
     };
 
-    // a portal event costs two rows, so size for the worst case
-    const int rowsPer = 2 * Niter + 1;
+    const int rowsPer = Niter + 1;
     Row *rows = new Row[Npart * rowsPer];
     int counts[Npart];
 
@@ -47,11 +43,9 @@ int main() {
                                        &rows[i * rowsPer], rowsPer);
     }
 
-    // a portal emits a second record saying where it leads
     for (int k = 0; k < nObj; ++k) {
         if (objs[k].type == LINE) {
-            printf("# line %.17g %.17g %.17g\n",
-                   objs[k].p[0], objs[k].p[1], objs[k].p[2]);
+            printf("# line %.17g %.17g %.17g\n", objs[k].p[0], objs[k].p[1], objs[k].p[2]);
         } else {
             printf("# segment %.17g %.17g %.17g %.17g\n",
                    objs[k].p[0], objs[k].p[1], objs[k].p[2], objs[k].p[3]);
@@ -72,21 +66,17 @@ int main() {
         }
     }
 
-    fprintf(stderr, "flipN -1  flipT +1   turns back\n");
+
+    fprintf(stderr, "particle  rows  teleports\n");
     for (int i = 0; i < Npart; ++i) {
+        int jumps = 0;
         for (int r = 1; r < counts[i]; ++r) {
             Row a = rows[i * rowsPer + r - 1], b = rows[i * rowsPer + r];
-            if (a.t != b.t || (a.x == b.x && a.y == b.y)) continue;
-            double ea = 0.5 * (a.vx * a.vx + a.vy * a.vy) + g * a.y;
-            double eb = 0.5 * (b.vx * b.vx + b.vy * b.vy) + g * b.y;
-            fprintf(stderr, "  p%d  (%6.2f,%5.2f) v=(%5.2f,%5.2f) -> "
-                            "(%6.2f,%5.2f) v=(%5.2f,%5.2f)   dE %.1e\n",
-                    i, a.x, a.y, a.vx, a.vy, b.x, b.y, b.vx, b.vy, fabs(eb - ea));
-            break;
+            if (a.t == b.t && (a.x != b.x || a.y != b.y)) ++jumps;
         }
+        fprintf(stderr, "%8d %5d %10d\n", i, counts[i], jumps);
     }
 
     delete[] rows;
-
     return 0;
 }

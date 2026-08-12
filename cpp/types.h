@@ -27,7 +27,18 @@ struct Row {
 #ifndef GRAVITY
 #define GRAVITY 1.0
 #endif
-constexpr double g = GRAVITY;
+
+// g and deadTime are mutable so the shared library can set them without a
+// rebuild; inline keeps that ODR-safe across translation units, and the
+// declare target puts one copy on the device for "target update to" to refresh
+#ifdef _OPENMP
+#pragma omp declare target
+#endif
+inline double g = GRAVITY;
+inline double deadTime = 1e-9;                        // below this is the bounce just resolved
+#ifdef _OPENMP
+#pragma omp end declare target
+#endif
+
 constexpr double e = 1.0;                             // restitution
-constexpr double deadTime = 1e-9;                     // below this is the bounce just resolved
 constexpr double MAGIC_NO_COLLISION = 987654321000.0;

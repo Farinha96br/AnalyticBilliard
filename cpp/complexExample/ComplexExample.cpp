@@ -36,9 +36,9 @@ int main() {
                      (rand() % 100) / 10.0 - 5.0, (rand() % 100) / 10.0 - 5.0};
     }
 
-    // nothing prints during the run: device code cannot stream to stdout. a
-    // portal event costs two rows, so the slice is sized for the worst case
-    int rowsPer = 2 * Niter + 1;
+    // nothing prints during the run: device code cannot stream to stdout.
+    // one row per event, plus the initial state
+    int rowsPer = Niter + 1;
     Row *rows = new Row[Npart * rowsPer];
     int *counts = new int[Npart];
 

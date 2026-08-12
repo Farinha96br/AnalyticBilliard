@@ -3,4 +3,6 @@
 *.out
 *.png
 *.venv
-
+*.build
+*.pyc
+*.abcache

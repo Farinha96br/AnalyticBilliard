@@ -1,14 +1,5 @@
 import sympy as sp
-
-
-
-# this is an example of target usage of the library
-
-# defin the root symbols (x,y) coordinates
-x, y = sp.symbols('x y')
-
-# Scene object types
-
+from hpcBilliards import *
 
 
 
@@ -20,9 +11,9 @@ x, y = sp.symbols('x y')
 
 
  
-Scene = {
+SCENE = {
     "g": 1.0,  # gravity
-    "collision": [
+    "solidObjects": [
         # line: a*x + b*y + c = 0
         {"type": "line", "params": [0.0, 1.0, 0.0]},
         #line segment: (x1,y1) to (x2,y2)
@@ -31,12 +22,57 @@ Scene = {
         {"type": "elipse", "params": [0.0, 1.0, 1.0, 1.0, 0.0]},
         # elipse arc: (x0,y0) center, a,b radii, and rotation angle theta stard and end angle
         {"type": "elipseArc", "params": [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, -3.14]},
+    ],
+    "portalObjecs": [
+        {"entry": "lineSegment", "params": [0.0, 1.0, 0.0, 1.0],
+         "exit": "lineSegment", "params": [1.0, 0.0, 1.0, 0.0], 
+         "tangentFlip": +1, "normalFlip": +1}
     ]
+
 }
 
 
+# initial contitions are a lists or numpy arrays
 
-# final usage example:
+x = np.array([0.5, 0.5])  # initial position
+y = np.array([1.0, 0.0])  # initial velocity
+vx = np.array([0.0, 0.0])  # initial velocity x
+vy = np.array([0.0, 0.0])  # initial velocity y
 
-# Get the final positions of a given scne
+
+
+# compile the scene for the first time
+# the backend can be "linear","openMP","gpu_openMP"
+compiledScene = compileScene(SCENE, backend="openmp")
+
+# This usage example run the scene for 1000 iterations and record the bounce and portal events.
+id, x_rec, y_rec, vx_rec, vy_rec, eventType = compiledScene.recordScene(x,y,vx,vy,SCENE,iterations=1000,eventType=["bounce","portal"],save=["id", "x","y","vx","vy","eventType"])
+
+
+# a change in the scene can be introduced
+SCENE_2 = {
+    "g": 0.5,  # gravity
+    "solidObjects": [
+        # line: a*x + b*y + c = 0
+        {"type": "line", "params": [0.1, 1.0, 0.0]},
+        #line segment: (x1,y1) to (x2,y2)
+        {"type": "lineSegment", "params": [10.0, 0.0, 10.0, 7.0]},
+        # elipse arc: (x0,y0) center, a,b radii, and rotation angle theta
+        {"type": "elipse", "params": [0.0, 1.0, 1.0, 1.0, 0.0]},
+        # elipse arc: (x0,y0) center, a,b radii, and rotation angle theta stard and end angle
+        {"type": "elipseArc", "params": [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, -3.14]},
+    ],
+    "portalObjecs": [
+        {"entry": "lineSegment", "params": [0.0, 1.0, 0.0, 1.0],
+         "exit": "lineSegment", "params": [1.0, 0.0, 1.0, 0.0], 
+         "tangentFlip": +1, "normalFlip": +1}
+    ]
+
+}
+
+# the scene valuesa are updated
+updateScene(SCENE_2, compiledScene)
+
+# This usage example runs the scene by time for 1000 seconds and record the bounce energy at the bounce events only. 
+id, E_rec = compiledScene.recordScene(x,y,vx,vy,SCENE,tf=1000,eventType=["bounce"],save=["id", "Energy"])
 

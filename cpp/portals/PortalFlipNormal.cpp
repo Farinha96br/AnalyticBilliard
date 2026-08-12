@@ -1,14 +1,15 @@
-// a portal pair glued the plain way: nothing is reversed.
-//   g++ -O2 -ffp-contract=off -I.. -o portalplain.out PortalPlain.cpp
-//   ./portalplain.out > portalplain.dat          (./checkHashPortal.sh does all six)
-//   python3 ../plotBox.py portalplain.dat --out portalplain.png --bounces 12 --g 1.0
+// flipNormal = -1: the velocity THROUGH the surface is reversed.
+
+//   g++ -O2 -ffp-contract=off -I.. -o portalflipnormal.out PortalFlipNormal.cpp
+//   ./portalflipnormal.out > portalflipnormal.dat          (./checkHashPortal.sh does all six)
+//   python3 ../plotBox.py portalflipnormal.dat --out portalflipnormal.png --bounces 12 --g 1.0
 
 #include "physics.h" // pulls in geometry.h and types.h
 #include <cstdio>
 
 int main() {
 
-    const int Niter = 1e6; 
+    const int Niter = 1e4; // a stability run; the plot only draws a window at each end
     const int Npart = 1;
 
     Object left  = makeLineSegment(-8.0, 2.0, -8.0, 8.0);
@@ -21,20 +22,20 @@ int main() {
         makeLine(1.0, 0.0, 20.0),  // wall     x = -20
         makeLine(1.0, 0.0, -20.0), // wall     x = 20
 
-        // flipNormal +1, flipTangent +1: the velocity crosses untouched
-        asPortal(left, right, 1.0, 1.0),
-        asPortal(right, left, 1.0, 1.0),
+        // flipNormal -1, flipTangent +1: the normal velocity is reversed
+        asPortal(left, right, -1.0, 1.0),
+        asPortal(right, left, -1.0, 1.0),
     };
 
-
+    // PortalPlain.cpp says why this start
     state states[Npart] = {
         {-16.0, 1.0, 5.75, 4.25},
     };
 
-    const int rowsPer = 2 * Niter + 1;
+    // one row per event, plus the initial state
+    const int rowsPer = Niter + 1;
     Row *rows = new Row[Npart * rowsPer];
     int counts[Npart];
-
 
 #ifdef _OPENMP
 #pragma omp target teams distribute parallel for \
@@ -71,8 +72,7 @@ int main() {
         }
     }
 
-
-    fprintf(stderr, "flipN +1  flipT +1   straight through\n");
+    fprintf(stderr, "flipN -1  flipT +1   turns back\n");
     for (int i = 0; i < Npart; ++i) {
         for (int r = 1; r < counts[i]; ++r) {
             Row a = rows[i * rowsPer + r - 1], b = rows[i * rowsPer + r];
