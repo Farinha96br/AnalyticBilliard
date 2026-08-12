@@ -12,22 +12,24 @@ GPUARCH=cc120 # RTX 5060 Ti. `nvaccelinfo | grep Target` if this moves
 CPUREPRO="-ffp-contract=off"
 GPUREPRO="-Kieee -Mnofma"
 
+INC=-I.. # physics.h, geometry.h and types.h live a level up
+
 # 1. serial
-$CXX -Wall -O2 $CPUREPRO -o box.out ComplexExample.cpp
+$CXX -Wall -O2 $CPUREPRO $INC -o box.out ComplexExample.cpp
 time ./box.out > box_serial.dat
-python3 plotBox.py box_serial.dat --out box_serial.png
+python3 ../../plotBox.py box_serial.dat --out box_serial.png
 
 # 2. OpenMP across the CPU cores
 # -foffload=disable: ComplexExample.cpp has an "omp target" region g++ cannot build device code for
-$CXX -Wall -O2 $CPUREPRO -fopenmp -foffload=disable -o box_omp.out ComplexExample.cpp
+$CXX -Wall -O2 $CPUREPRO $INC -fopenmp -foffload=disable -o box_omp.out ComplexExample.cpp
 time ./box_omp.out > box_omp.dat
-python3 plotBox.py box_omp.dat --out box_omp.png 
+python3 ../../plotBox.py box_omp.dat --out box_omp.png 
 
 # 3. OpenMP offloaded to the GPU
 # MANDATORY: fail loudly rather than fall back to the host and look like a slow GPU
-$NV -O2 $GPUREPRO -mp=gpu -gpu=$GPUARCH -o box_gpu.out ComplexExample.cpp
+$NV -O2 $GPUREPRO -mp=gpu -gpu=$GPUARCH $INC -o box_gpu.out ComplexExample.cpp
 time OMP_TARGET_OFFLOAD=MANDATORY ./box_gpu.out > box_gpu.dat
-python3 plotBox.py box_gpu.dat --out box_gpu.png
+python3 ../../plotBox.py box_gpu.dat --out box_gpu.png
 
 
 # bitwise check

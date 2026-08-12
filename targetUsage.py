@@ -46,7 +46,7 @@ vy = np.array([0.0, 0.0])  # initial velocity y
 compiledScene = compileScene(SCENE, backend="openmp")
 
 # This usage example run the scene for 1000 iterations and record the bounce and portal events.
-x_rec, y_rec, vx_rec, vy_rec, eventType = compiledScene.recordScene(x,y,vx,vy,SCENE,iterations=1000,eventType=["bounce","portal"],save=["x","y","vx","vy","eventType"])
+id, x_rec, y_rec, vx_rec, vy_rec, eventType = compiledScene.recordScene(x,y,vx,vy,SCENE,iterations=1000,eventType=["bounce","portal"],save=["id", "x","y","vx","vy","eventType"])
 
 
 # a change in the scene can be introduced
@@ -74,5 +74,5 @@ SCENE_2 = {
 updateScene(SCENE_2, compiledScene)
 
 # This usage example runs the scene by time for 1000 seconds and record the bounce energy at the bounce events only. 
-E_rec = compiledScene.recordScene(x,y,vx,vy,SCENE,tf=1000,eventType=["bounce"],save=["Energy"])
+id, E_rec = compiledScene.recordScene(x,y,vx,vy,SCENE,tf=1000,eventType=["bounce"],save=["id", "Energy"])
 

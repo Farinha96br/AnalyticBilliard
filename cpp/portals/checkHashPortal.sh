@@ -115,7 +115,7 @@ else
 fi
 
 # has to come before the exit, or it never runs at all
-rm -f *.out *.png *.dat *.build *.log
+#rm -f *.out *.png *.dat *.build *.log
 
 exit $fail
 
