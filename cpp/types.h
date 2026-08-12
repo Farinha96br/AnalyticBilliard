@@ -22,8 +22,6 @@ struct Row {
     double t, x, y, vx, vy; // the particle id is the buffer position
 };
 
-// constexpr so the values reach the device. -DGRAVITY=0.0 leaves an integrable
-// billiard, whose conserved quantities are the sharpest test of a new shape
 #ifndef GRAVITY
 #define GRAVITY 1.0
 #endif
