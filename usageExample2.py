@@ -97,7 +97,8 @@ if billiard.cached:
 # means exactly 2001 rows.
 # ---------------------------------------------------------------------------
 
-run = billiard.recordScene(startX, startY, startVX, startVY, iterations=2000)
+run = billiard.recordWithIterations(startX, startY, startVX, startVY,
+                                    iterations=2000)
 
 rowsUsed = run.counts[0]
 eventTypes = run.evType[0, :rowsUsed]
@@ -110,38 +111,46 @@ print(f"  the rest are bounces (evType 1), and row 0 is the start (evType 0)")
 
 
 # ---------------------------------------------------------------------------
-# Run 2: stop after a fixed amount of TIME instead.
+# Run 2: the same trajectory as a TIME SERIES rather than an event table.
 #
-# iterations= and tf= are mutually exclusive -- passing both, or neither, is an
-# error. A tf run cannot know how many rows it needs in advance, so you have to
-# say, and check afterwards whether it filled up.
+# recordWithTime samples a uniform grid, t = 0, dt, 2*dt, ... dt is not a step
+# size and nothing is integrated: between collisions the state is an exact
+# parabola, and this evaluates it wherever you ask. A smaller dt buys more
+# samples of the very same flight and costs no accuracy, because there is none
+# to lose.
+#
+# floor(tf / dt) + 1 rows, the same grid for every particle, and the count is
+# known before the run starts -- so there is nothing to say about how much room
+# to give it, and nothing to check afterwards.
 # ---------------------------------------------------------------------------
 
-timedRun = billiard.recordScene(startX, startY, startVX, startVY,
-                                tf=120.0, maxRows=5000)
+timedRun = billiard.recordWithTime(startX, startY, startVX, startVY,
+                                   tf=120.0, dt=0.05)
 
-lastRow = timedRun.counts[0] - 1
 print()
-print(f"tf=120 gave {timedRun.counts[0]} rows, "
-      f"last event at t={timedRun.t[0, lastRow]:.3f}")
-if timedRun.truncated[0]:
-    print("  WARNING: it ran out of rows, so this record is cut short")
-else:
-    print("  it finished on its own, so the record is complete")
+print(f"tf=120, dt=0.05 gave {timedRun.counts[0]} rows, "
+      f"t from {timedRun.t[0, 0]:.2f} to {timedRun.t[0, -1]:.2f}")
+print(f"  mean height over the run = {timedRun.y[0].mean():.4f}")
+print(f"  that is a time average, which only evenly spaced samples can give:")
+print(f"  in the event table above, rows crowd where the bounces are")
 
 
 # ---------------------------------------------------------------------------
-# Run 3: ask for one column only.
+# Run 3: ask for one column only, and only every tenth event.
 #
 # save= decides what gets allocated, not just what you get handed back. Asking
 # for Energy alone allocates one array instead of six, which matters when the
-# run is long. eventType= then throws away every row that is not a bounce.
+# run is long, and stride= shrinks the other axis the same way: 20000 events
+# recorded 2001 rows deep. Every event in between is still simulated -- stride
+# subsamples the record, never the physics. eventType= then throws away every
+# row that is not a bounce.
 # ---------------------------------------------------------------------------
 
-energyRun = billiard.recordScene(startX, startY, startVX, startVY,
-                                 iterations=20000,
-                                 save=["Energy"],
-                                 eventType=["bounce"])
+energyRun = billiard.recordWithIterations(startX, startY, startVX, startVY,
+                                          iterations=20000,
+                                          stride=10,
+                                          save=["Energy"],
+                                          eventType=["bounce"])
 
 energy = energyRun.energy[0, :energyRun.counts[0]]
 
@@ -219,6 +228,10 @@ def drawPanel(axes, record, scene, title, arcsToDraw=40):
     # Now the flight path. Every row is the state a flight STARTS from, and
     # that flight ends at the next row's time -- so the arc between row i and
     # row i+1 is just the parabola, sampled for drawing.
+    #
+    # this is by hand because the panel wants each arc coloured separately.
+    # recordWithTime does the same sampling in the kernel when you want the
+    # whole path as one array instead.
     for i in range(rows - 1):
         flightTime = t[i + 1] - t[i]
         step = np.linspace(0.0, flightTime, 60)
@@ -259,8 +272,8 @@ libraryTimestampBefore = billiard.so_path.stat().st_mtime
 
 for axes, (title, scene) in zip(axesGrid.ravel(), panels):
     updateScene(scene, billiard)          # <- no compiler runs on this line
-    record = billiard.recordScene(startX, startY, startVX, startVY,
-                                  iterations=400)
+    record = billiard.recordWithIterations(startX, startY, startVX, startVY,
+                                           iterations=400)
     drawPanel(axes, record, scene, title)
 
 libraryTimestampAfter = billiard.so_path.stat().st_mtime

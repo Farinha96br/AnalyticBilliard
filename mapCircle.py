@@ -244,8 +244,8 @@ for frame, lineY in enumerate(lineHeights):
             continue
 
         # no "ID" column: the particle index is the first axis of every array, so
-        # run.x has shape (nParticles, maxRows) and particle i is run.x[i]
-        run = billiard.recordScene(x0, y0, vx0, vy0, iterations=NBOUNCES,
+        # run.x has shape (nParticles, rows) and particle i is run.x[i]
+        run = billiard.recordWithIterations(x0, y0, vx0, vy0, iterations=NBOUNCES,
                                 save=["x", "y", "vx", "vy"],
                                 eventType=["bounce"])
 
@@ -315,9 +315,9 @@ for frame, lineY in enumerate(lineHeights):
 
         # t is needed here and not in the map: an arc is rebuilt by integrating
         # from one row for exactly t[i+1] - t[i]
-        path = billiard.recordScene(x0, y0, vx0, vy0,
-                                    iterations=TRAJECTORY_ARCS,
-                                    save=["t", "x", "y", "vx", "vy"])
+        path = billiard.recordWithIterations(x0, y0, vx0, vy0,
+                                             iterations=TRAJECTORY_ARCS,
+                                             save=["t", "x", "y", "vx", "vy"])
         drawTrajectory(axes, path, 0, G, TRAJECTORY_ARCS)
 
     pathFigure.suptitle(f"trajectories at y = {lineY:+.3f}   "
