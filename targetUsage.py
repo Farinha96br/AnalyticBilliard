@@ -45,8 +45,13 @@ vy = np.array([0.0, 0.0])  # initial velocity y
 # the backend can be "linear","openMP","gpu_openMP"
 compiledScene = compileScene(SCENE, backend="openmp")
 
-# This usage example run the scene for 1000 iterations and record the bounce and portal events.
-id, x_rec, y_rec, vx_rec, vy_rec, eventType = compiledScene.recordScene(x,y,vx,vy,SCENE,iterations=1000,eventType=["bounce","portal"],save=["id", "x","y","vx","vy","eventType"])
+# This usage example runs the scene for 1000 events and records the bounce and
+# portal ones. There is no "id" column: the particle index is the first axis of
+# every array, so x_rec[i] is particle i.
+x_rec, y_rec, vx_rec, vy_rec, evType = compiledScene.recordWithIterations(
+    x, y, vx, vy, iterations=1000,
+    eventType=["bounce", "portal"],
+    save=["x", "y", "vx", "vy", "evType"])
 
 
 # a change in the scene can be introduced
@@ -73,6 +78,14 @@ SCENE_2 = {
 # the scene valuesa are updated
 updateScene(SCENE_2, compiledScene)
 
-# This usage example runs the scene by time for 1000 seconds and record the bounce energy at the bounce events only. 
-id, E_rec = compiledScene.recordScene(x,y,vx,vy,SCENE,tf=1000,eventType=["bounce"],save=["id", "Energy"])
+# The energy at the bounce events only. save= decides what is allocated, not
+# just what comes back, so this holds one column instead of six.
+E_rec = compiledScene.recordWithIterations(
+    x, y, vx, vy, iterations=1000,
+    eventType=["bounce"], save=["Energy"]).energy
+
+# The same run seen as a time series instead: one row every 0.01 up to t=1000,
+# on a grid shared by every particle. Rows here are samples of a flight rather
+# than events, so there is no eventType filter -- that is the other function.
+series = compiledScene.recordWithTime(x, y, vx, vy, tf=1000.0, dt=0.01)
 
