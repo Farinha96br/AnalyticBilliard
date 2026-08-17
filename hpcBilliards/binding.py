@@ -1,4 +1,4 @@
-"""ctypes binding: CompiledScene, updateScene, recordWithIterations/WithTime."""
+"""ctypes binding: CompiledScene, updateScene, the recorders and getBasins."""
 
 import ctypes
 import math
@@ -10,13 +10,20 @@ from . import codegen, compile as _compile, scene as _scene
 
 # must match enum abColumn in UsableFunctions.cpp
 COLUMN_BIT = {"t": 1 << 0, "x": 1 << 1, "y": 1 << 2, "vx": 1 << 3,
-              "vy": 1 << 4, "Energy": 1 << 5, "evType": 1 << 6}
+              "vy": 1 << 4, "Energy": 1 << 5, "evType": 1 << 6,
+              "id": 1 << 7}
 COLUMNS = list(COLUMN_BIT)
 
 # an event row knows what kind of event it is; a grid sample is not an event,
-# so evType is not merely unset there but meaningless
+# so evType is not merely unset there but meaningless. an escape row is neither:
+# it is where a run ENDED, so what it carries instead is which basin ended it
 DEFAULT_SAVE = ["t", "x", "y", "vx", "vy", "evType"]
 DEFAULT_SAVE_SAMPLED = ["t", "x", "y", "vx", "vy"]
+DEFAULT_SAVE_ESCAPE = ["t", "x", "y", "vx", "vy", "id"]
+
+# the columns each kind of run can produce at all
+TABLE_COLUMNS = ["t", "x", "y", "vx", "vy", "Energy", "evType"]
+ESCAPE_COLUMNS = ["t", "x", "y", "vx", "vy", "Energy", "id"]
 
 EV_INITIAL, EV_BOUNCE, EV_PORTAL = 0, 1, 2
 EVENT_CODE = {"initial": EV_INITIAL, "bounce": EV_BOUNCE, "portal": EV_PORTAL}
@@ -36,6 +43,50 @@ class _Output(ctypes.Structure):
                 ("counts", ctypes.POINTER(ctypes.c_int)),
                 ("maxRows", ctypes.c_int),
                 ("columns", ctypes.c_int)]
+
+
+# must match struct abEscape in UsableFunctions.cpp
+class _Escape(ctypes.Structure):
+    _fields_ = [("t", ctypes.POINTER(ctypes.c_double)),
+                ("x", ctypes.POINTER(ctypes.c_double)),
+                ("y", ctypes.POINTER(ctypes.c_double)),
+                ("vx", ctypes.POINTER(ctypes.c_double)),
+                ("vy", ctypes.POINTER(ctypes.c_double)),
+                ("energy", ctypes.POINTER(ctypes.c_double)),
+                ("basin", ctypes.POINTER(ctypes.c_int)),
+                ("columns", ctypes.c_int)]
+
+
+class Escape:
+    """where each particle's run ended: one row per particle, all 1-D.
+
+    `id` is the basin that absorbed it, or **0** for a particle still going when
+    tf arrived -- those report their state at exactly tf. For the rest, the state
+    is the one AT the basin surface, with the velocity still pointing into it:
+    the run stops on contact rather than responding to it.
+
+    Unpacking yields the saved columns in the order asked for.
+    """
+
+    def __init__(self, cols, order):
+        self._cols, self._order = cols, order
+        for name, a in cols.items():
+            setattr(self, "energy" if name == "Energy" else name, a)
+
+    def __iter__(self):
+        return iter(self._cols[k] for k in self._order)
+
+    def tally(self):
+        """-> {basin label: how many particles ended there}, 0 included"""
+        if "id" not in self._cols:
+            raise ValueError("this run did not save the 'id' column")
+        label, n = np.unique(self._cols["id"], return_counts=True)
+        return dict(zip(label.tolist(), n.tolist()))
+
+    def __repr__(self):
+        n = next(iter(self._cols.values())).size
+        where = f", basins={self.tally()}" if "id" in self._cols else ""
+        return f"<Escape {n} particles, columns={self._order}{where}>"
 
 
 class Record:
@@ -95,6 +146,8 @@ class CompiledScene:
         L.abRunIterations.restype = i
         L.abRunSampled.argtypes = [P(d)] * 4 + [i, d, i, P(_Output)]
         L.abRunSampled.restype = i
+        L.abRunBasins.argtypes = [P(d)] * 4 + [i, d, i, P(_Escape)]
+        L.abRunBasins.restype = i
 
     def _push(self, scene):
         """parameters and constants into the running library. no compiler."""
@@ -102,6 +155,10 @@ class CompiledScene:
         if self.lib.abSetConstants(g, dead) != 0:
             raise _scene.SceneError(f"library rejected deadTime={dead}")
         self.g = g
+
+        # kept so basins= can be a parameter push: replacing one key of the
+        # scene needs the other keys, and this is the only copy of them
+        self.scene = scene
 
         _, params, offsets = _scene.flatten(scene)
         p = np.ascontiguousarray(params, dtype=np.float64)
@@ -179,15 +236,94 @@ class CompiledScene:
             lambda args, nPart, out: self.lib.abRunSampled(
                 *args, nPart, dt, int(maxEvents), ctypes.byref(out)))
 
+    def getBasins(self, x, y, vx=None, vy=None, tf=None, basins=None,
+                  save=None, maxEvents=10 ** 7):
+        """run each particle until a basin absorbs it, or until tf. -> Escape
+
+        One row per particle instead of a table, so this costs the same memory
+        whether a particle escaped at once or bounced a million times first --
+        which is what makes a 256x256 grid of initial conditions reasonable.
+
+        `id` is the basin that took it, or 0 for a particle still going at tf.
+        An escaped particle's state is the one AT the basin surface, snapped
+        onto it, with the velocity still pointing in: the run ends on contact
+        instead of responding to it, so what comes back is the escape and not
+        the bounce that would have followed. A particle with id 0 reports its
+        state at exactly t = tf.
+
+        `basins=` pushes new numbers into the shapes the scene was compiled
+        with, exactly as updateScene does -- so sweeping a basin's position
+        never runs the compiler, and changing the shape *list* is refused.
+        """
+        if tf is None:
+            raise ValueError("getBasins needs tf=, the time to give up at")
+        tf = float(tf)
+        if not tf > 0.0:
+            raise ValueError(f"tf must be > 0, got {tf}")
+
+        if not any(t.startswith(_scene.BASIN) for t in self.types):
+            raise _scene.SceneError(
+                "this scene was compiled with no basinObjects, so there is "
+                "nothing for a particle to escape through. add a 'basinObjects' "
+                "key to the scene dict and compile it")
+
+        if basins is not None:
+            # the structure check and the parameter push, both already written
+            updateScene({**self.scene, "basinObjects": basins}, self)
+
+        save = list(DEFAULT_SAVE_ESCAPE if save is None else save)
+        bad = [s for s in save if s not in ESCAPE_COLUMNS]
+        if bad:
+            raise ValueError(
+                f"unknown column(s) {bad} for an escape run, expected from "
+                f"{ESCAPE_COLUMNS}. a row here is where a run ended, not an "
+                f"event, so there is no evType")
+
+        x, y = (np.ascontiguousarray(a, dtype=np.float64).ravel() for a in (x, y))
+        nPart = x.size
+        vx = np.zeros(nPart) if vx is None else vx
+        vy = np.zeros(nPart) if vy is None else vy
+        vx, vy = (np.ascontiguousarray(a, dtype=np.float64).ravel()
+                  for a in (vx, vy))
+        if not (y.size == vx.size == vy.size == nPart):
+            raise ValueError("x, y, vx, vy must be the same length")
+
+        cols, bits, dummy = {}, 0, np.zeros(1, dtype=np.float64)
+        idummy = np.zeros(1, dtype=np.int32)
+        for name in ESCAPE_COLUMNS:
+            if name in save:
+                dt = np.int32 if name == "id" else np.float64
+                cols[name] = np.zeros(nPart, dtype=dt)
+                bits |= COLUMN_BIT[name]
+
+        def dp(name):
+            return cols.get(name, dummy).ctypes.data_as(
+                ctypes.POINTER(ctypes.c_double))
+
+        out = _Escape(
+            dp("t"), dp("x"), dp("y"), dp("vx"), dp("vy"), dp("Energy"),
+            cols.get("id", idummy).ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+            bits)
+
+        args = [a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                for a in (x, y, vx, vy)]
+        rc = self.lib.abRunBasins(*args, nPart, tf, int(maxEvents),
+                                  ctypes.byref(out))
+        if rc != 0:
+            raise RuntimeError(f"run failed with code {rc}")
+
+        return Escape(cols, save)
+
     def _run(self, x, y, vx, vy, rows, save, who, call):
         """allocate the columns, let `call` fill them, wrap them in a Record.
 
         Everything the two recorders share. They differ only in how many rows
         they work out they need, and which entry point they hand them to.
         """
-        bad = [s for s in save if s not in COLUMN_BIT]
+        bad = [s for s in save if s not in TABLE_COLUMNS]
         if bad:
-            raise ValueError(f"unknown column(s) {bad}, expected from {COLUMNS}")
+            raise ValueError(f"unknown column(s) {bad}, expected from "
+                             f"{TABLE_COLUMNS}")
 
         x, y, vx, vy = (np.ascontiguousarray(a, dtype=np.float64).ravel()
                         for a in (x, y, vx, vy))
@@ -199,7 +335,7 @@ class CompiledScene:
 
         cols, bits, dummy = {}, 0, np.zeros(1, dtype=np.float64)
         idummy = np.zeros(1, dtype=np.int32)
-        for name in COLUMNS:
+        for name in TABLE_COLUMNS:
             if name in save:
                 dt = np.int32 if name == "evType" else np.float64
                 cols[name] = np.zeros((nPart, rows), dtype=dt)
@@ -277,3 +413,14 @@ def updateScene(scene, compiled):
             f"that is structure, not a parameter, so it needs a recompile")
     compiled._push(scene)
     return compiled
+
+
+def getBasins(compiled, x, y, vx=None, vy=None, tf=None, basins=None,
+              save=None, maxEvents=10 ** 7):
+    """run each particle until a basin absorbs it, or until tf. -> Escape
+
+    The module-level form of CompiledScene.getBasins, matching updateScene's
+    call shape. See that method for what the columns mean.
+    """
+    return compiled.getBasins(x, y, vx, vy, tf=tf, basins=basins, save=save,
+                              maxEvents=maxEvents)

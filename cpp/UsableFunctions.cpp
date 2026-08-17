@@ -16,7 +16,7 @@
 enum abColumn {
     AB_T      = 1 << 0, AB_X      = 1 << 1, AB_Y  = 1 << 2,
     AB_VX     = 1 << 3, AB_VY     = 1 << 4,
-    AB_ENERGY = 1 << 5, AB_EVTYPE = 1 << 6
+    AB_ENERGY = 1 << 5, AB_EVTYPE = 1 << 6, AB_BASIN = 1 << 7
 };
 
 struct abOutput {
@@ -25,6 +25,15 @@ struct abOutput {
     int    *counts;    // rows actually written, per particle
     int     maxRows;   // stride of every column above
     int     columns;   // bitwise OR of abColumn
+};
+
+// where a run ended, one row per particle rather than a table: an escape run
+// keeps no trajectory at all, so its cost in memory is the same whether it ran
+// for one collision or a million
+struct abEscape {
+    double *t, *x, *y, *vx, *vy, *energy;
+    int    *basin;   // which basin absorbed it, or 0 for "still going at tf"
+    int     columns; // bitwise OR of abColumn
 };
 
 // which of the two tables below to fill. never crosses the ABI: each entry
@@ -76,7 +85,12 @@ static inline void abWriteRow(const abOutput *o, int i, int n,
 // one a stride of 1 walks, just sampled coarsely.
 //
 // the caller sizes the buffer at nIter / stride + 1, which is exactly what
-// this writes; n < maxRows is belt and braces against that arithmetic drifting
+// this writes; n < maxRows is belt and braces against that arithmetic drifting.
+//
+// a basin ends the run wherever it falls, so its row is kept whatever the
+// stride: it is the one row that is not a sample of a continuing trajectory but
+// the end of one, and a record that stopped without saying where would be a
+// record of nothing in particular
 static int abRecordEvents(state s, int nIter, int stride, int i, const abOutput *o) {
     const int maxRows = o->maxRows;
     double t = 0.0;
@@ -93,6 +107,14 @@ static int abRecordEvents(state s, int nIter, int stride, int i, const abOutput 
         double tc = stepScene(&s, objs, nObj, &kind);
         if (tc == MAGIC_NO_COLLISION) break; // nothing left to hit, ever
         t += tc;
+
+        if (kind == EV_ABSORB) { // the particle left: s is on the basin
+            if (n < maxRows) {
+                abWriteRow(o, i, n, t, s, kind);
+                ++n;
+            }
+            break;
+        }
     }
     return n;
 }
@@ -134,10 +156,59 @@ static int abSampleGrid(state s, double dt, int maxEvents, int i, const abOutput
         }
 
         if (tc == MAGIC_NO_COLLISION) break; // s never moved; the loop above
-        t = tEnd;                            // already coasted out the rest
-        kind = next;
-    }
+        if (next == EV_ABSORB) break;        // already coasted out the rest.
+        t = tEnd;                            // a basin ends the run, so the
+        kind = next;                         // grid stops there: counts says
+    }                                        // how far it got
     return n;
+}
+
+// one particle, run until a basin absorbs it or until tf, whichever comes
+// first. only the ending is kept.
+//
+// two ways to finish, and the difference is the whole point of the function:
+// hitting a basin reports the state AT the surface, velocity still pointing
+// into it, because that is the escape being measured -- responding to the
+// surface would describe a bounce that never happened. Reaching tf instead
+// coasts the last flight to exactly tf and reports basin 0
+static void abEscapeOne(state s, double tf, int maxEvents, int i,
+                        const abEscape *o) {
+    const int cols = o->columns;
+    double t = 0.0;
+    int kind = EV_INITIAL, basin = 0, absorbed = 0;
+
+    // three ways out, and every one of them has to leave t and basin agreeing:
+    // absorbed (basin > 0, t = when), reached tf (basin 0, t = tf exactly), or
+    // ran out of maxEvents, the Zeno guard, which reports basin 0 at the last
+    // event it managed -- the one case where basin 0 does not mean t == tf
+    for (int ev = 0; ev <= maxEvents; ++ev) {
+        state s0 = s;
+        double tc = stepScene(&s, objs, nObj, &kind, &basin);
+
+        // nothing ahead, or nothing ahead before tf: coast the parabola from
+        // where the flight began and stop. s may have been advanced past tf by
+        // the step just taken, which is why s0 is the one that is used
+        if (tc == MAGIC_NO_COLLISION || t + tc > tf) {
+            s = trajectory(s0, tf - t);
+            t = tf;
+            break;
+        }
+
+        t += tc;
+        if (kind == EV_ABSORB) { // s is already snapped onto the basin
+            absorbed = 1;
+            break;
+        }
+    }
+    if (!absorbed) basin = 0; // stepScene only writes it when one is hit
+
+    if (cols & AB_T)      o->t[i]      = t;
+    if (cols & AB_X)      o->x[i]      = s.x;
+    if (cols & AB_Y)      o->y[i]      = s.y;
+    if (cols & AB_VX)     o->vx[i]     = s.vx;
+    if (cols & AB_VY)     o->vy[i]     = s.vy;
+    if (cols & AB_ENERGY) o->energy[i] = 0.5 * (s.vx * s.vx + s.vy * s.vy) + g * s.y;
+    if (cols & AB_BASIN)  o->basin[i]  = basin;
 }
 
 #ifdef _OPENMP
@@ -204,4 +275,40 @@ extern "C" int abRunSampled(const double *x0, const double *y0,
     // spinning with no sample ever landing before the next event
     if (!(dt > 0.0) || maxEvents < 0) return 1;
     return abRun(x0, y0, vx0, vy0, nPart, AB_GRID, 0, 1, dt, maxEvents, o);
+}
+
+// the escape run keeps one row per particle instead of a table, so its map
+// clauses are all [0:nPart] and it does not share abRun's block above
+extern "C" int abRunBasins(const double *x0, const double *y0,
+                           const double *vx0, const double *vy0,
+                           int nPart, double tf, int maxEvents, abEscape *o) {
+    if (nPart < 1 || maxEvents < 0) return 1;
+    if (!(tf >= 0.0)) return 1; // also catches NaN
+
+    const int cols = o->columns;
+    double *ot = o->t, *ox = o->x, *oy = o->y;
+    double *ovx = o->vx, *ovy = o->vy, *oe = o->energy;
+    int *ob = o->basin;
+
+    // sized to 1 for any column the caller did not ask for: OpenMP cannot map
+    // a null pointer, so the binding passes a throwaway and leaves the bit clear
+    const int lt  = (cols & AB_T)      ? nPart : 1;
+    const int lx  = (cols & AB_X)      ? nPart : 1;
+    const int ly  = (cols & AB_Y)      ? nPart : 1;
+    const int lvx = (cols & AB_VX)     ? nPart : 1;
+    const int lvy = (cols & AB_VY)     ? nPart : 1;
+    const int le  = (cols & AB_ENERGY) ? nPart : 1;
+    const int lb  = (cols & AB_BASIN)  ? nPart : 1;
+
+#ifdef _OPENMP
+#pragma omp target teams distribute parallel for                            \
+    map(to : x0[0 : nPart], y0[0 : nPart], vx0[0 : nPart], vy0[0 : nPart])  \
+    map(from : ot[0 : lt], ox[0 : lx], oy[0 : ly], ovx[0 : lvx],            \
+               ovy[0 : lvy], oe[0 : le], ob[0 : lb])
+#endif
+    for (int i = 0; i < nPart; ++i) {
+        abEscape dev = {ot, ox, oy, ovx, ovy, oe, ob, cols};
+        abEscapeOne({x0[i], y0[i], vx0[i], vy0[i]}, tf, maxEvents, i, &dev);
+    }
+    return 0;
 }

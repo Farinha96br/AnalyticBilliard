@@ -9,7 +9,7 @@ No numbers appear in the output. Every value is read from the p[] buffer at call
 time, which is what lets a parameter change skip the compiler entirely.
 """
 
-from .scene import MAKER, NPARAM
+from .scene import BASIN, MAKER, NPARAM
 
 # an object whose maker divides by zero produces NaN rather than crashing, and a
 # NaN hitTime loses every comparison against MAGIC_NO_COLLISION -- reading as an
@@ -55,6 +55,16 @@ extern "C" int abBuildScene(const double *p, const int *off) {{
 
 def _build(k, kind):
     o = f"off[{k}]"
+
+    # a basin is its shape with the response swapped, so it reuses the shape's
+    # own maker and its own guard. the label sits one past the shape's params
+    if kind.startswith(BASIN):
+        shape = kind[len(BASIN):]
+        args = ", ".join(f"p[{o}+{j}]" if j else f"p[{o}]"
+                         for j in range(NPARAM[shape]))
+        return (f"    objs[{k}] = asBasin({MAKER[shape]}({args}), "
+                f"p[{o}+{NPARAM[shape]}]);")
+
     if kind == "portal":
         # the exit is read for its endpoints and then discarded: asPortal keeps
         # the derived frame in q[], so a one-way portal costs one object and
@@ -70,7 +80,8 @@ def _build(k, kind):
 
 def generate(types):
     guards = "\n".join(
-        "    " + GUARD[kind].format(o=f"off[{k}]", k=k) for k, kind in enumerate(types))
+        "    " + GUARD[kind[len(BASIN):] if kind.startswith(BASIN) else kind]
+        .format(o=f"off[{k}]", k=k) for k, kind in enumerate(types))
     builds = "\n".join(_build(k, kind) for k, kind in enumerate(types))
     summary = ", ".join(f"{i}:{t}" for i, t in enumerate(types))
     return HEADER.format(n=len(types), summary=summary, guards=guards, builds=builds)

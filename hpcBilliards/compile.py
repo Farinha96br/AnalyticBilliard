@@ -17,12 +17,40 @@ NVCXX = os.environ.get(
     "AB_NVCXX", "/opt/nvidia/hpc_sdk/Linux_x86_64/26.3/compilers/bin/nvc++")
 GPUARCH = os.environ.get("AB_GPUARCH", "cc120")
 
+def _gompRpath(cxx):
+    """pin the .so to the libgomp belonging to the compiler that built it.
+
+    An OpenMP build needs a libgomp at least as new as the compiler's. A conda
+    or venv interpreter often ships an older one of its own, and since it is the
+    host process it wins the search: the library then fails to load with a
+    "version GOMP_x.y not found" that has nothing to do with any code here, and
+    only for the backend that is the default. --disable-new-dtags makes this a
+    DT_RPATH, which is searched before LD_LIBRARY_PATH, so the match is settled
+    at build time rather than left to whoever imports it.
+
+    -> [] if the compiler cannot say, in which case nothing is pinned and the
+    behaviour is exactly what it was before.
+    """
+    try:
+        r = subprocess.run([cxx, "-print-file-name=libgomp.so.1"],
+                           capture_output=True, text=True)
+    except OSError:
+        return []
+    if r.returncode != 0:
+        return []
+    lib = pathlib.Path(r.stdout.strip())
+    if not lib.is_absolute() or not lib.exists():
+        return [] # gcc echoes the bare name back when it has no idea
+    return [f"-Wl,--disable-new-dtags,-rpath,{lib.resolve().parent}"]
+
+
 # -ffp-contract=off / -Kieee -Mnofma are what keep the three outputs bit for bit
 # identical: no FMA fusion, and no non-IEEE division or sqrt
 BACKENDS = {
     "linear":     (lambda: [os.environ.get("AB_CXX", "g++"), "-O2", "-ffp-contract=off"]),
     "openmp":     (lambda: [os.environ.get("AB_CXX", "g++"), "-O2", "-ffp-contract=off",
-                            "-fopenmp", "-foffload=disable"]),
+                            "-fopenmp", "-foffload=disable"]
+                           + _gompRpath(os.environ.get("AB_CXX", "g++"))),
     "gpu_openmp": (lambda: [NVCXX, "-O2", "-Kieee", "-Mnofma",
                             "-mp=gpu", f"-gpu={GPUARCH}", "-Minfo=mp"]),
 }

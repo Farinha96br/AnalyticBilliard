@@ -19,13 +19,61 @@ MAKER = {
     "elipseArc":   "makeElipseArc",
 }
 
+# a basin shape is the same geometry with a different response, so it reuses the
+# maker -- but "a line you bounce off" and "a line that ends the run" are not the
+# same structure, so the prefix keeps them apart in the hash. the label rides
+# along as one more parameter, which is what lets basins be relabelled, and
+# moved, without a rebuild
+BASIN = "basin:"
+for _k, _n in list(NPARAM.items()):
+    if _k in MAKER:
+        NPARAM[BASIN + _k] = _n + 1
+
 
 class SceneError(ValueError):
     pass
 
 
+def _basinSlots(scene):
+    """basinObjects, a dict of label -> shapes, flattened in sorted label order.
+
+    Sorted so that the same dict always produces the same structure hash: dict
+    order is insertion order, and two callers building the same basins in a
+    different order must not compile two libraries.
+    """
+    basins = scene.get("basinObjects") or {}
+    if not isinstance(basins, dict):
+        raise SceneError(f"basinObjects must be a dict of label -> list of "
+                         f"shapes, got {type(basins).__name__}")
+
+    out = []
+    for label in sorted(basins):
+        if not isinstance(label, int) or isinstance(label, bool):
+            raise SceneError(f"basin label {label!r} must be an int")
+        if label < 1:
+            raise SceneError(f"basin label {label} is not usable: 0 is reserved "
+                             f"for a particle that reached tf without escaping, "
+                             f"so labels start at 1")
+        shapes = basins[label]
+        if not shapes:
+            raise SceneError(f"basin {label} has no shapes")
+        for i, o in enumerate(shapes):
+            kind = o.get("type")
+            if kind not in MAKER:
+                raise SceneError(f"basinObjects[{label}][{i}]: unknown type "
+                                 f"{kind!r}, expected one of {sorted(MAKER)}")
+            # checked here, not in flatten: there the label is already appended
+            # and the count it reports would be one more than what was written
+            params = list(o.get("params", []))
+            if len(params) != NPARAM[kind]:
+                raise SceneError(f"basinObjects[{label}][{i}] ({kind}): expected "
+                                 f"{NPARAM[kind]} parameters, got {len(params)}")
+            out.append((BASIN + kind, params + [float(label)]))
+    return out
+
+
 def _slots(scene):
-    """the scene as a flat list of (type, params), solids first then portals"""
+    """the scene as a flat list of (type, params): solids, portals, then basins"""
     out = []
     for i, o in enumerate(scene.get("solidObjects", [])):
         kind = o.get("type")
@@ -42,6 +90,8 @@ def _slots(scene):
         out.append(("portal", list(p["entryParams"]) + list(p["exitParams"])
                     + [float(p.get("normalFlip", 1.0)),
                        float(p.get("tangentFlip", 1.0))]))
+
+    out.extend(_basinSlots(scene))
     return out
 
 
