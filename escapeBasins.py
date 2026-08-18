@@ -28,8 +28,7 @@ RB = 1.0            # boundary radius
 HOLE = 0.04         # angular HALF-width of each hole; the paper's 2h is the full width
 ENERGIES = (0.5, 0.7, 1.3, 2.0)   # Fig. 2: two hyperbolic, two mixed phase space
 RESOLUTION = 512    # per axis of the (theta, alpha) grid
-COLLISIONS = 6000   # give up after this many bounces (the paper affords 10^6)
-TF = 1.0e6          # ...and a time limit far beyond what that many bounces take
+COLLISIONS = 1e5   # give up after this many bounces (the paper affords 10^6)
 
 # potential energy is measured from the bottom of the billiard, y = -1, so
 # U(theta) = g*(sin(theta) + 1) and a particle needs E >= U to exist at all
@@ -83,7 +82,7 @@ def launch(theta, alpha, energy):
             speed * np.cos(eta), speed * np.sin(eta), allowed)
 
 
-scene = compileScene(openCircle(HOLE), backend="openmp")
+scene = compileScene(openCircle(HOLE), backend="gpu_openmp")
 print(f"{len(scene.types)} objects -> {scene.so_path.name}, cached: {scene.cached}")
 print(f"hole half-width h = {HOLE}, g = {G}, grid {RESOLUTION}x{RESOLUTION}")
 
@@ -100,9 +99,11 @@ figure, axesGrid = plt.subplots(2, 2, figsize=(11.5, 9.0))
 for axes, energy in zip(axesGrid.ravel(), ENERGIES):
     x, y, vx, vy, allowed = launch(thetaGrid, alphaGrid, energy)
 
-    # only the energetically possible initial conditions are simulated at all
+    # only the energetically possible initial conditions are simulated at all.
+    # the paper's criterion is a collision count, not a time, which is what
+    # iterations= says: no trajectory is stored either way, just the ending
     esc = getBasins(scene, x[allowed], y[allowed], vx[allowed], vy[allowed],
-                    tf=TF, maxEvents=COLLISIONS, save=["t", "id"])
+                    iterations=COLLISIONS, save=["t", "id"])
 
     picture = np.full(thetaGrid.shape, -1, dtype=np.int32)
     picture[allowed] = esc.id

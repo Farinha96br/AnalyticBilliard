@@ -14,8 +14,8 @@ CPP = REPO / "cpp"          # every .h and .cpp lives here
 CACHE = REPO / ".abcache"
 
 NVCXX = os.environ.get(
-    "AB_NVCXX", "/opt/nvidia/hpc_sdk/Linux_x86_64/26.3/compilers/bin/nvc++")
-GPUARCH = os.environ.get("AB_GPUARCH", "cc120")
+    "AB_NVCXX", "/opt/nvidia/hpc_sdk/Linux_x86_64/26.1/compilers/bin/nvc++")
+GPUARCH = os.environ.get("AB_GPUARCH", "cc89")
 
 def _gompRpath(cxx):
     """pin the .so to the libgomp belonging to the compiler that built it.
@@ -51,8 +51,22 @@ BACKENDS = {
     "openmp":     (lambda: [os.environ.get("AB_CXX", "g++"), "-O2", "-ffp-contract=off",
                             "-fopenmp", "-foffload=disable"]
                            + _gompRpath(os.environ.get("AB_CXX", "g++"))),
+    # -static-nvidia is not an optimisation, it is what makes this library work
+    # at all when it is not the first thing in the process. With the NVIDIA
+    # runtime linked dynamically, the device image fails to register whenever
+    # libab.so is dlopen'd into a process that already holds other libraries --
+    # importing matplotlib before compileScene is enough -- and OpenMP then runs
+    # the whole thing on the host without a word. Linking the runtime in removes
+    # the ordering: import whatever you like, in whatever order.
+    #
+    # -gpu=nordc is the usual advice for offload code inside a dlopen'd library
+    # and is NOT usable here: the scene lives in objs[], a declare target global,
+    # which a non-relocatable build never populates on the device. Every particle
+    # then finds nothing to hit and reports as trapped -- silently wrong, which
+    # is worse than the problem it would have fixed
     "gpu_openmp": (lambda: [NVCXX, "-O2", "-Kieee", "-Mnofma",
-                            "-mp=gpu", f"-gpu={GPUARCH}", "-Minfo=mp"]),
+                            "-mp=gpu", f"-gpu={GPUARCH}", "-Minfo=mp",
+                            "-static-nvidia"]),
 }
 
 

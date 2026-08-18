@@ -9,6 +9,10 @@
 #include "physics.h"
 #include "generatedScene.h" // nObj, objs[], abBuildScene
 
+#ifdef _OPENMP
+#include <omp.h> // omp_is_initial_device, for abOnDevice below
+#endif
+
 // which columns the caller wants. every pointer below must be valid even when
 // unwanted, because OpenMP cannot map a null one -- the binding passes a
 // one-element throwaway for those and leaves the bit clear, so nothing is
@@ -40,7 +44,32 @@ struct abEscape {
 // point picks its own, so a caller cannot ask for a mixture of the two
 enum abMode { AB_EVENTS, AB_GRID };
 
+// what ends an escape run that no basin ever absorbs: a time, or a number of
+// events. unlike the two tables above these are the same table -- one row per
+// particle, and the label saying where it ended -- so the choice is a flag here
+// rather than a second recorder
+enum abLimit { AB_UNTIL_TIME, AB_UNTIL_EVENTS };
+
 extern "C" int abObjectCount() { return nObj; }
+
+// did a target region actually land on the device? one empty region, asked once
+// when the library is loaded.
+//
+// a GPU build that quietly ran on the host is the single failure this backend
+// cannot be allowed to report as success: the numbers come back correct, the
+// wall time is merely wrong, and nothing anywhere says which processor did the
+// work. the host builds answer 0 honestly -- neither of them has a device --
+// which is why only the GPU backend asks
+extern "C" int abOnDevice() {
+#ifdef _OPENMP
+    int onHost = 1;
+#pragma omp target map(from : onHost)
+    { onHost = omp_is_initial_device(); }
+    return !onHost;
+#else
+    return 0;
+#endif
+}
 
 // g and deadTime live in types.h as mutable globals so they can be set without
 // a rebuild. deadTime < 0 would let firstRoot re-find the collision just
@@ -163,36 +192,48 @@ static int abSampleGrid(state s, double dt, int maxEvents, int i, const abOutput
     return n;
 }
 
-// one particle, run until a basin absorbs it or until tf, whichever comes
-// first. only the ending is kept.
+// one particle, run until a basin absorbs it or until the run's limit is spent,
+// whichever comes first. only the ending is kept: no row is written per event,
+// whichever limit is counting them, so this costs the same memory for a run of
+// one collision and a run of a million.
 //
-// two ways to finish, and the difference is the whole point of the function:
-// hitting a basin reports the state AT the surface, velocity still pointing
-// into it, because that is the escape being measured -- responding to the
-// surface would describe a bounce that never happened. Reaching tf instead
-// coasts the last flight to exactly tf and reports basin 0
-static void abEscapeOne(state s, double tf, int maxEvents, int i,
+// escaping is the same either way, and the difference is the whole point of the
+// function: hitting a basin reports the state AT the surface, velocity still
+// pointing into it, because that is the escape being measured -- responding to
+// the surface would describe a bounce that never happened.
+//
+// not escaping is what the limit decides. AB_UNTIL_TIME coasts the last flight
+// to exactly tf and reports basin 0 there; AB_UNTIL_EVENTS has no tf to coast
+// to, so it reports basin 0 at the last event it took, and maxEvents is the
+// count asked for rather than a guard against one particle running away
+static void abEscapeOne(state s, double tf, int maxEvents, int limit, int i,
                         const abEscape *o) {
     const int cols = o->columns;
     double t = 0.0;
     int kind = EV_INITIAL, basin = 0, absorbed = 0;
 
-    // three ways out, and every one of them has to leave t and basin agreeing:
-    // absorbed (basin > 0, t = when), reached tf (basin 0, t = tf exactly), or
-    // ran out of maxEvents, the Zeno guard, which reports basin 0 at the last
-    // event it managed -- the one case where basin 0 does not mean t == tf
-    for (int ev = 0; ev <= maxEvents; ++ev) {
+    // every way out has to leave t and basin agreeing: absorbed (basin > 0,
+    // t = when), or basin 0 at whatever the limit means -- t = tf exactly for a
+    // timed run, the last event's time for an event-limited one. A timed run
+    // spending maxEvents instead is the Zeno guard firing, and reports as the
+    // latter: the one case where basin 0 does not mean t == tf
+    for (int ev = 0; ev < maxEvents; ++ev) {
         state s0 = s;
         double tc = stepScene(&s, objs, nObj, &kind, &basin);
 
         // nothing ahead, or nothing ahead before tf: coast the parabola from
         // where the flight began and stop. s may have been advanced past tf by
         // the step just taken, which is why s0 is the one that is used
-        if (tc == MAGIC_NO_COLLISION || t + tc > tf) {
+        if (limit == AB_UNTIL_TIME && (tc == MAGIC_NO_COLLISION || t + tc > tf)) {
             s = trajectory(s0, tf - t);
             t = tf;
             break;
         }
+
+        // the same emptiness with no tf to fill: counting events, a particle
+        // with nothing left to hit will never reach another one, so the run is
+        // over at the last event it did reach. stepScene leaves s where it was
+        if (tc == MAGIC_NO_COLLISION) break;
 
         t += tc;
         if (kind == EV_ABSORB) { // s is already snapped onto the basin
@@ -279,12 +320,10 @@ extern "C" int abRunSampled(const double *x0, const double *y0,
 
 // the escape run keeps one row per particle instead of a table, so its map
 // clauses are all [0:nPart] and it does not share abRun's block above
-extern "C" int abRunBasins(const double *x0, const double *y0,
-                           const double *vx0, const double *vy0,
-                           int nPart, double tf, int maxEvents, abEscape *o) {
-    if (nPart < 1 || maxEvents < 0) return 1;
-    if (!(tf >= 0.0)) return 1; // also catches NaN
-
+static int abRunEscape(const double *x0, const double *y0,
+                       const double *vx0, const double *vy0,
+                       int nPart, double tf, int maxEvents, int limit,
+                       abEscape *o) {
     const int cols = o->columns;
     double *ot = o->t, *ox = o->x, *oy = o->y;
     double *ovx = o->vx, *ovy = o->vy, *oe = o->energy;
@@ -308,7 +347,35 @@ extern "C" int abRunBasins(const double *x0, const double *y0,
 #endif
     for (int i = 0; i < nPart; ++i) {
         abEscape dev = {ot, ox, oy, ovx, ovy, oe, ob, cols};
-        abEscapeOne({x0[i], y0[i], vx0[i], vy0[i]}, tf, maxEvents, i, &dev);
+        abEscapeOne({x0[i], y0[i], vx0[i], vy0[i]}, tf, maxEvents, limit, i, &dev);
     }
     return 0;
+}
+
+// one entry point per limit, as the recorders do: an escape run gives up either
+// at a time or after a number of collisions, and no single argument list could
+// say which of the two a caller meant. Both fill the same one row per particle.
+//
+// maxEvents is the Zeno guard here and nothing else: a scene that traps a
+// particle in unboundedly many collisions before tf would otherwise never
+// finish, and the guard makes it report basin 0 early instead
+extern "C" int abRunBasinsTime(const double *x0, const double *y0,
+                               const double *vx0, const double *vy0,
+                               int nPart, double tf, int maxEvents,
+                               abEscape *o) {
+    if (nPart < 1 || maxEvents < 1) return 1;
+    if (!(tf >= 0.0)) return 1; // also catches NaN
+    return abRunEscape(x0, y0, vx0, vy0, nPart, tf, maxEvents, AB_UNTIL_TIME, o);
+}
+
+// here the count IS the limit, so there is no tf to pass and none to reach: a
+// particle that survives `iterations` events reports basin 0 at the last of
+// them. 0 is allowed and means exactly what it says -- the initial state, which
+// no basin has had a chance to absorb yet
+extern "C" int abRunBasinsIterations(const double *x0, const double *y0,
+                                     const double *vx0, const double *vy0,
+                                     int nPart, int iterations, abEscape *o) {
+    if (nPart < 1 || iterations < 0) return 1;
+    return abRunEscape(x0, y0, vx0, vy0, nPart, 0.0, iterations,
+                       AB_UNTIL_EVENTS, o);
 }

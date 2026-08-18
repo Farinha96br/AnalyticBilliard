@@ -60,10 +60,14 @@ class _Escape(ctypes.Structure):
 class Escape:
     """where each particle's run ended: one row per particle, all 1-D.
 
+    No trajectory is kept, only the ending, whichever limit ended it -- there is
+    no series here to slice, and .t is when each single row happened.
+
     `id` is the basin that absorbed it, or **0** for a particle still going when
-    tf arrived -- those report their state at exactly tf. For the rest, the state
-    is the one AT the basin surface, with the velocity still pointing into it:
-    the run stops on contact rather than responding to it.
+    the limit ran out: a tf= run reports those at exactly tf, an iterations= run
+    at the last event it took. For the rest, the state is the one AT the basin
+    surface, with the velocity still pointing into it: the run stops on contact
+    rather than responding to it.
 
     Unpacking yields the saved columns in the order asked for.
     """
@@ -128,6 +132,19 @@ class CompiledScene:
         self.lib = ctypes.CDLL(str(self.so_path))
         self._declare()
 
+        # asked before anything is run, because a GPU build that fell back to the
+        # host answers every question correctly except how long it took
+        self.onDevice = bool(self.lib.abOnDevice())
+        if backend == "gpu_openmp" and not self.onDevice:
+            raise _scene.SceneError(
+                f"{backend} compiled and loaded, but its target region ran on "
+                f"the HOST: the device image did not register when "
+                f"{self.so_path.name} was opened, and OpenMP fell back silently. "
+                f"The known trigger is another library reaching the process "
+                f"first -- importing matplotlib.pyplot before compileScene does "
+                f"it -- so importing it afterwards is the workaround. Use "
+                f"backend='openmp' to ask for the CPU on purpose")
+
         if self.lib.abObjectCount() != len(self.types):
             raise RuntimeError(
                 f"{self.so_path} holds {self.lib.abObjectCount()} objects but "
@@ -138,6 +155,7 @@ class CompiledScene:
         L = self.lib
         d, i, P = ctypes.c_double, ctypes.c_int, ctypes.POINTER
         L.abObjectCount.restype = i
+        L.abOnDevice.restype = i
         L.abSetConstants.argtypes = [d, d]
         L.abSetConstants.restype = i
         L.abBuildScene.argtypes = [P(d), P(i)]
@@ -146,8 +164,10 @@ class CompiledScene:
         L.abRunIterations.restype = i
         L.abRunSampled.argtypes = [P(d)] * 4 + [i, d, i, P(_Output)]
         L.abRunSampled.restype = i
-        L.abRunBasins.argtypes = [P(d)] * 4 + [i, d, i, P(_Escape)]
-        L.abRunBasins.restype = i
+        L.abRunBasinsTime.argtypes = [P(d)] * 4 + [i, d, i, P(_Escape)]
+        L.abRunBasinsTime.restype = i
+        L.abRunBasinsIterations.argtypes = [P(d)] * 4 + [i, i, P(_Escape)]
+        L.abRunBasinsIterations.restype = i
 
     def _push(self, scene):
         """parameters and constants into the running library. no compiler."""
@@ -236,30 +256,71 @@ class CompiledScene:
             lambda args, nPart, out: self.lib.abRunSampled(
                 *args, nPart, dt, int(maxEvents), ctypes.byref(out)))
 
-    def getBasins(self, x, y, vx=None, vy=None, tf=None, basins=None,
-                  save=None, maxEvents=10 ** 7):
-        """run each particle until a basin absorbs it, or until tf. -> Escape
+    def getBasins(self, x, y, vx=None, vy=None, tf=None, iterations=None,
+                  basins=None, save=None, maxEvents=None):
+        """run each particle until a basin absorbs it, or until you give up on
+        it. -> Escape
 
-        One row per particle instead of a table, so this costs the same memory
-        whether a particle escaped at once or bounced a million times first --
-        which is what makes a 256x256 grid of initial conditions reasonable.
+        Give up either at a time, tf=, or after a number of events,
+        iterations= -- exactly one of the two, since they are the same run
+        stopped by different clocks. The recorders are two functions because
+        they build different tables; this is one because the table is the same
+        either way: NOTHING along the way is kept, only where each run ended.
 
-        `id` is the basin that took it, or 0 for a particle still going at tf.
-        An escaped particle's state is the one AT the basin surface, snapped
-        onto it, with the velocity still pointing in: the run ends on contact
-        instead of responding to it, so what comes back is the escape and not
-        the bounce that would have followed. A particle with id 0 reports its
-        state at exactly t = tf.
+        One row per particle, then, so this costs the same memory whether a
+        particle escaped at once or bounced a million times first -- which is
+        what makes a 512x512 grid of initial conditions reasonable, and what
+        separates iterations= here from recordWithIterations, which stores
+        every event it counts.
+
+        `id` is the basin that took it, or 0 for a particle still going when the
+        limit ran out. An escaped particle's state is the one AT the basin
+        surface, snapped onto it, with the velocity still pointing in: the run
+        ends on contact instead of responding to it, so what comes back is the
+        escape and not the bounce that would have followed.
+
+        Where an id 0 particle is reported is the one thing the two limits
+        disagree about: a tf= run coasts its last flight to exactly t = tf, an
+        iterations= run stops at the last event it took and reports t there --
+        there being no tf to coast to.
+
+        maxEvents belongs to tf= alone: it bounds a run that would otherwise
+        collide unboundedly often before tf, and a particle that hits it reports
+        id 0 early, at its last event rather than at tf. An iterations= run is
+        already that bound, so it takes no maxEvents.
 
         `basins=` pushes new numbers into the shapes the scene was compiled
         with, exactly as updateScene does -- so sweeping a basin's position
         never runs the compiler, and changing the shape *list* is refused.
         """
-        if tf is None:
-            raise ValueError("getBasins needs tf=, the time to give up at")
-        tf = float(tf)
-        if not tf > 0.0:
-            raise ValueError(f"tf must be > 0, got {tf}")
+        if (tf is None) == (iterations is None):
+            raise ValueError(
+                "getBasins needs exactly one limit: tf=, the time to give up "
+                "at, or iterations=, the number of events to give up after")
+
+        byTime = tf is not None
+        if byTime:
+            tf = float(tf)
+            if not tf > 0.0:
+                raise ValueError(f"tf must be > 0, got {tf}")
+            if tf >= MAGIC_NO_COLLISION:
+                raise ValueError(
+                    f"tf must stay well under {MAGIC_NO_COLLISION:g}: that is "
+                    f"the value the solver reads as 'never hits anything'")
+            maxEvents = 10 ** 7 if maxEvents is None else int(maxEvents)
+            if maxEvents < 1:
+                raise ValueError(f"maxEvents must be >= 1, got {maxEvents}: a "
+                                 f"run allowed no event at all could only ever "
+                                 f"report its initial state")
+        else:
+            iterations = int(iterations)
+            if iterations < 0:
+                raise ValueError(f"iterations must be >= 0, got {iterations}")
+            if maxEvents is not None:
+                raise ValueError(
+                    "maxEvents bounds how long a tf= run may collide for; an "
+                    "iterations= run is that bound already, so pass one or the "
+                    "other")
 
         if not any(t.startswith(_scene.BASIN) for t in self.types):
             raise _scene.SceneError(
@@ -307,8 +368,10 @@ class CompiledScene:
 
         args = [a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                 for a in (x, y, vx, vy)]
-        rc = self.lib.abRunBasins(*args, nPart, tf, int(maxEvents),
-                                  ctypes.byref(out))
+        rc = (self.lib.abRunBasinsTime(*args, nPart, tf, maxEvents,
+                                       ctypes.byref(out)) if byTime else
+              self.lib.abRunBasinsIterations(*args, nPart, iterations,
+                                             ctypes.byref(out)))
         if rc != 0:
             raise RuntimeError(f"run failed with code {rc}")
 
@@ -415,12 +478,13 @@ def updateScene(scene, compiled):
     return compiled
 
 
-def getBasins(compiled, x, y, vx=None, vy=None, tf=None, basins=None,
-              save=None, maxEvents=10 ** 7):
-    """run each particle until a basin absorbs it, or until tf. -> Escape
+def getBasins(compiled, x, y, vx=None, vy=None, tf=None, iterations=None,
+              basins=None, save=None, maxEvents=None):
+    """run each particle until a basin absorbs it, or until tf= / iterations=
+    runs out. -> Escape
 
     The module-level form of CompiledScene.getBasins, matching updateScene's
-    call shape. See that method for what the columns mean.
+    call shape. See that method for the two limits and what the columns mean.
     """
-    return compiled.getBasins(x, y, vx, vy, tf=tf, basins=basins, save=save,
-                              maxEvents=maxEvents)
+    return compiled.getBasins(x, y, vx, vy, tf=tf, iterations=iterations,
+                              basins=basins, save=save, maxEvents=maxEvents)
