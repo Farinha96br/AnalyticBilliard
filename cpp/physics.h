@@ -55,14 +55,19 @@ inline state respond(Object o, state s) {
 }
 
 
-enum EventType { EV_INITIAL = 0, EV_BOUNCE = 1, EV_PORTAL = 2 };
+enum EventType { EV_INITIAL = 0, EV_BOUNCE = 1, EV_PORTAL = 2, EV_ABSORB = 3 };
 
 // advance s to the next event. returns the time it took, or MAGIC_NO_COLLISION
 // if nothing is ever hit; *kind says which sort of event it was.
 //
-// both recorders share this so the two subtleties below are written once. they
-// were each a bug at some point and neither is obvious from the outside
-inline double stepScene(state *s, const Object *objs, int nObj, int *kind) {
+// every recorder shares this so the three subtleties below are written once.
+// they were each a bug at some point and none is obvious from the outside.
+//
+// *basin is only written when the event is EV_ABSORB. it is optional so the
+// recorders that cannot meet one -- a scene with no basins in it -- do not have
+// to carry a variable for it
+inline double stepScene(state *s, const Object *objs, int nObj, int *kind,
+                        int *basin = nullptr) {
     // objects never met answer with the sentinel, which loses every comparison
     double tc = MAGIC_NO_COLLISION;
     for (int k = 0; k < nObj; ++k) {
@@ -72,6 +77,21 @@ inline double stepScene(state *s, const Object *objs, int nObj, int *kind) {
     if (tc == MAGIC_NO_COLLISION) return tc;
 
     state at = trajectory(*s, tc);
+
+    // a basin is looked for FIRST and settles it on its own. it ends the run,
+    // so no wall sharing this corner can turn a velocity that is never used
+    // again, and no portal can move a particle that has already arrived. the
+    // position is snapped but the velocity is left exactly as it came in: what
+    // a caller wants is the state AT the surface, not the one after responding
+    // to it
+    for (int k = 0; k < nObj; ++k) {
+        if (objs[k].response == ABSORB && hitTime(objs[k], *s) <= tc + deadTime) {
+            *s = snapTo(objs[k], at);
+            *kind = EV_ABSORB;
+            if (basin) *basin = (int)objs[k].q[0];
+            return tc;
+        }
+    }
 
     int portal = -1;
     for (int k = 0; k < nObj; ++k) {
@@ -89,7 +109,7 @@ inline double stepScene(state *s, const Object *objs, int nObj, int *kind) {
     // velocity -- skip it and a portal ending on a wall carries the particle
     // away still travelling into the surface, and out of the scene
     for (int k = 0; k < nObj; ++k) {
-        if (objs[k].response != PORTAL && hitTime(objs[k], *s) <= tc + deadTime) {
+        if (objs[k].response == REFLECT && hitTime(objs[k], *s) <= tc + deadTime) {
             at = bounce(objs[k], snapTo(objs[k], at));
         }
     }
@@ -184,7 +204,7 @@ inline int getFinalPosition(state s, const Object *objs, int nObj, double t_f, s
             }
         }
         for (int k = 0; k < nObj; ++k) {
-            if (objs[k].response != PORTAL && hitTime(objs[k], s) <= tc + deadTime) {
+            if (objs[k].response == REFLECT && hitTime(objs[k], s) <= tc + deadTime) {
                 at = bounce(objs[k], snapTo(objs[k], at));
             }
         }

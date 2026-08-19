@@ -10,7 +10,8 @@ enum ObjectType { LINE = 0,
                   ELIPSE_ARC = 3};
 
 enum Response { REFLECT = 0,
-                PORTAL = 1};
+                PORTAL = 1,
+                ABSORB = 2};
 
 struct Object {
     int type;
@@ -30,6 +31,10 @@ struct Object {
                   //
                   // the partner is held as coordinates, never as an index: nothing
                   // to dereference on the device
+                  //
+                  // ABSORB: the basin label, and nothing else. several shapes may
+                  //         carry the same one, which is what makes a basin able
+                  //         to be a square rather than only a line
 };
 
 #ifdef _OPENMP
@@ -315,6 +320,19 @@ inline Object asPortal(Object o, Object partner, double flipNormal,
     o.q[6] = ox + len * tx;     o.q[7] = oy + len * ty;
     o.q[8] = flipNormal;
     o.q[9] = flipTangent;
+    return o;
+}
+
+// a basin ends the run instead of responding to it. any shape can become one --
+// the geometry is untouched, so it is hit-tested by exactly the same hitTime as
+// the wall it would otherwise have been.
+//
+// the label is what a caller gets back, and several shapes may share one: a
+// basin is a set of surfaces, not a surface. 0 is not usable here, it is what a
+// particle that reached the time limit reports
+inline Object asBasin(Object o, double label) {
+    o.response = ABSORB;
+    o.q[0] = label;
     return o;
 }
 
