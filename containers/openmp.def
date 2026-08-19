@@ -1,15 +1,7 @@
 Bootstrap: docker
 From: ubuntu:24.04
 
-# AnalyticBilliard on the CPU: the "linear" and "openmp" backends.
-#
-# The image carries a COMPILER, not just a runtime, because that is what this
-# library actually needs: compileScene shells out to g++ at run time and builds
-# the scene into a fresh .so. A runtime-only image would fail on the first call.
-#
-# The repo is not copied in. Apptainer mounts $HOME and the working directory
-# already, so you edit on the host and run in here, and .abcache stays outside.
-#
+
 #   apptainer build --fakeroot containers/openmp.sif containers/openmp.def
 #   apptainer run containers/openmp.sif escapeBasins.py
 

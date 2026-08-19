@@ -1,24 +1,9 @@
 Bootstrap: docker
 From: nvcr.io/nvidia/nvhpc:26.1-devel-cuda13.1-ubuntu24.04
 
-# AnalyticBilliard on an NVIDIA GPU: the "gpu_openmp" backend, plus the two CPU
-# ones, since the HPC SDK image carries g++ as well as nvc++.
-#
-# The tag matches the SDK this project was developed against: 26.1 with CUDA
-# 13.1, the same pair as /opt/nvidia/hpc_sdk/Linux_x86_64/26.1 on the dev
-# machine, so the container compiles what the host compiles. Newer ones exist
-# (26.3, 26.5); -cuda_multi- variants carry several CUDA versions and are much
-# larger. Tag list:
-#     https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nvhpc
-#
-# The image carries COMPILERS, not just runtimes: compileScene shells out to
-# nvc++ at run time and builds the scene into a fresh .so.
-#
 #   apptainer build --fakeroot containers/gpu.sif containers/gpu.def
 #   apptainer run --nv containers/gpu.sif escapeBasins.py
-#
-# --nv is mandatory. It is what puts the host's driver (libcuda) inside; without
-# it there is no device, and -gpu=ccnative has nothing to detect.
+detect.
 
 %post
     export DEBIAN_FRONTEND=noninteractive
