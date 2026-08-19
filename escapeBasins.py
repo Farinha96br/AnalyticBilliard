@@ -27,8 +27,8 @@ G = 0.5             # the paper's gravitational acceleration
 RB = 1.0            # boundary radius
 HOLE = 0.04         # angular HALF-width of each hole; the paper's 2h is the full width
 ENERGIES = (0.5, 0.7, 1.3, 2.0)   # Fig. 2: two hyperbolic, two mixed phase space
-RESOLUTION = 512    # per axis of the (theta, alpha) grid
-COLLISIONS = 1e5   # give up after this many bounces (the paper affords 10^6)
+RESOLUTION = 256    # per axis of the (theta, alpha) grid
+COLLISIONS = 1e4   # give up after this many bounces (the paper affords 10^6)
 
 # potential energy is measured from the bottom of the billiard, y = -1, so
 # U(theta) = g*(sin(theta) + 1) and a particle needs E >= U to exist at all
@@ -82,7 +82,7 @@ def launch(theta, alpha, energy):
             speed * np.cos(eta), speed * np.sin(eta), allowed)
 
 
-scene = compileScene(openCircle(HOLE), backend="gpu_openmp")
+scene = compileScene(openCircle(HOLE), backend="openmp")
 print(f"{len(scene.types)} objects -> {scene.so_path.name}, cached: {scene.cached}")
 print(f"hole half-width h = {HOLE}, g = {G}, grid {RESOLUTION}x{RESOLUTION}")
 
