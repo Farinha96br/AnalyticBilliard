@@ -51,23 +51,13 @@ BACKENDS = {
     "openmp":     (lambda: [os.environ.get("AB_CXX", "g++"), "-O2", "-ffp-contract=off",
                             "-fopenmp", "-foffload=disable"]
                            + _gompRpath(os.environ.get("AB_CXX", "g++"))),
-    # -static-nvidia is not an optimisation, it is what makes this library work
-    # at all when it is not the first thing in the process. With the NVIDIA
-    # runtime linked dynamically, the device image fails to register whenever
-    # libab.so is dlopen'd into a process that already holds other libraries --
-    # importing matplotlib before compileScene is enough -- and OpenMP then runs
-    # the whole thing on the host without a word. Linking the runtime in removes
-    # the ordering: import whatever you like, in whatever order.
-    #
-    # -gpu=nordc is the usual advice for offload code inside a dlopen'd library
-    # and is NOT usable here: the scene lives in objs[], a declare target global,
-    # which a non-relocatable build never populates on the device. Every particle
-    # then finds nothing to hit and reports as trapped -- silently wrong, which
-    # is worse than the problem it would have fixed
+
     "gpu_openmp": (lambda: [NVCXX, "-O2", "-Kieee", "-Mnofma",
                             "-mp=gpu", f"-gpu={GPUARCH}", "-Minfo=mp",
                             "-static-nvidia"]),
 }
+
+LINK_LAST = {}
 
 
 class BuildError(RuntimeError):
@@ -80,9 +70,11 @@ def build(header_src, backend):
         raise BuildError(f"unknown backend {backend!r}, "
                          f"expected one of {sorted(BACKENDS)}")
     flags = BACKENDS[backend]()
+    link = LINK_LAST.get(backend, list)()
 
     ubody = (CPP / "UsableFunctions.cpp").read_bytes()
-    key = hashlib.sha1(header_src.encode() + ubody + repr(flags).encode()).hexdigest()[:16]
+    key = hashlib.sha1(header_src.encode() + ubody
+                       + repr(flags).encode() + repr(link).encode()).hexdigest()[:16]
 
     CACHE.mkdir(exist_ok=True)
     workdir = CACHE / f"{backend}_{key}"
@@ -93,8 +85,9 @@ def build(header_src, backend):
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / "generatedScene.h").write_text(header_src)
 
-    cmd = flags + ["-shared", "-fPIC", f"-I{CPP}", f"-I{workdir}",
-                   str(CPP / "UsableFunctions.cpp"), "-o", str(so)]
+    cmd = (flags + ["-shared", "-fPIC", f"-I{CPP}", f"-I{workdir}",
+                    str(CPP / "UsableFunctions.cpp")]
+           + link + ["-o", str(so)])
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise BuildError("compile failed:\n  " + " ".join(cmd) + "\n" + r.stderr)
