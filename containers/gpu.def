@@ -1,0 +1,89 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/nvhpc:26.1-devel-cuda13.1-ubuntu24.04
+
+#   apptainer build --fakeroot containers/gpu.sif containers/gpu.def
+#   apptainer run --nv containers/gpu.sif escapeBasins.py
+detect.
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+        ca-certificates
+
+    # as in openmp.def: a venv, because pip into the system python is refused
+    python3 -m venv /opt/venv
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip
+    /opt/venv/bin/pip install --no-cache-dir \
+        numpy pandas matplotlib black isort
+
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    export PATH=/opt/venv/bin:$PATH
+    export MPLBACKEND=Agg
+
+    # hpcBilliards/compile.py defaults NVCXX to a hardcoded
+    # /opt/nvidia/hpc_sdk/.../26.1/compilers/bin/nvc++ that will not exist here.
+    # The bare name resolves through PATH instead, whatever the image ships
+    export AB_NVCXX=nvc++
+
+    # ccnative builds for whichever GPU --nv exposes, so this image is not tied
+    # to the cc89 the host defaults to. Pin a specific one when you want to:
+    #     APPTAINERENV_AB_GPUARCH=cc80 apptainer run --nv containers/gpu.sif ...
+    export AB_GPUARCH=${AB_GPUARCH:-ccnative}
+
+    # Drop the SDK's own compilers/lib from the search path, and ONLY that.
+    #
+    # It ships a second libgomp.so.1 which is missing GOMP_teams4, a symbol that
+    # any g++ 12 or newer emits for `omp teams`. Leave it on LD_LIBRARY_PATH and
+    # the g++-built "openmp" backend dies at load with an undefined symbol that
+    # belongs to no code in this project. The GPU backend is built with
+    # -static-nvidia and needs nothing from that directory at run time -- the
+    # resulting .so links only libstdc++, libc, libgcc_s and libm.
+    #
+    # Pruned rather than cleared: --nv puts the host driver libraries on this
+    # same variable, and clearing it would hide libcuda.
+    LD_LIBRARY_PATH=$(printf '%s' "$LD_LIBRARY_PATH" | tr ':' '\n' \
+        | grep -v 'hpc_sdk.*/compilers/lib' | tr '\n' ':' | sed 's/:$//')
+    export LD_LIBRARY_PATH
+
+%runscript
+    exec python3 "$@"
+
+%test
+    set -e
+    nvc++ --version | head -2
+    g++ --version | head -1
+    python3 -c "import numpy, pandas, matplotlib; print('python stack ok')"
+    black --version
+    isort --version
+    # the GPU itself is not checked here: a build host usually has no device,
+    # and --nv is a run-time flag. compileScene's own abOnDevice probe raises if
+    # a gpu_openmp scene ever ends up executing on the host
+
+%labels
+    Description AnalyticBilliard, NVIDIA GPU backend (and the CPU ones)
+    Backends    linear, openmp, gpu_openmp
+
+%help
+    AnalyticBilliard on an NVIDIA GPU. Provides nvc++ for backend="gpu_openmp"
+    and g++ for "linear" and "openmp", plus numpy, pandas, matplotlib, black
+    and isort.
+
+    Build:
+        apptainer build --fakeroot containers/gpu.sif containers/gpu.def
+
+    Run (--nv is required, it is what exposes the driver):
+        apptainer run --nv containers/gpu.sif escapeBasins.py
+        apptainer exec --nv containers/gpu.sif python3
+
+    Compiling for a specific architecture instead of autodetecting:
+        APPTAINERENV_AB_GPUARCH=cc80 apptainer run --nv containers/gpu.sif ...
+
+    A scene compiled with backend="gpu_openmp" verifies at load that its target
+    region really ran on the device, and raises rather than falling back to the
+    CPU in silence.
