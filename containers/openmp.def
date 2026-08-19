@@ -1,0 +1,76 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+# AnalyticBilliard on the CPU: the "linear" and "openmp" backends.
+#
+# The image carries a COMPILER, not just a runtime, because that is what this
+# library actually needs: compileScene shells out to g++ at run time and builds
+# the scene into a fresh .so. A runtime-only image would fail on the first call.
+#
+# The repo is not copied in. Apptainer mounts $HOME and the working directory
+# already, so you edit on the host and run in here, and .abcache stays outside.
+#
+#   apptainer build --fakeroot containers/openmp.sif containers/openmp.def
+#   apptainer run containers/openmp.sif escapeBasins.py
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        g++ \
+        python3 \
+        python3-venv \
+        ca-certificates
+
+    # a venv rather than pip into the system python: 24.04 marks that one
+    # externally managed and refuses (PEP 668). /opt/venv goes on PATH below
+    python3 -m venv /opt/venv
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip
+    /opt/venv/bin/pip install --no-cache-dir \
+        numpy pandas matplotlib black isort
+
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    export PATH=/opt/venv/bin:$PATH
+
+    # nothing here draws on a screen -- the scripts save a PNG and exit -- and
+    # the image ships no display stack, so Agg is the only sensible backend
+    export MPLBACKEND=Agg
+
+    # LD_LIBRARY_PATH is deliberately left untouched. This image holds exactly
+    # one libgomp, the one g++ was built against, and the whole point of the
+    # container is that nothing can shadow it. Ubuntu 24.04 carries g++ 13,
+    # comfortably past the GCC 12 that GOMP_teams4 first appeared in
+
+%runscript
+    exec python3 "$@"
+
+%test
+    set -e
+    g++ --version | head -1
+    python3 -c "import numpy, pandas, matplotlib; print('python stack ok')"
+    black --version
+    isort --version
+
+%labels
+    Description AnalyticBilliard, CPU backends (linear and openmp)
+    Backends    linear, openmp
+
+%help
+    AnalyticBilliard on the CPU. Provides g++ for the "linear" and "openmp"
+    backends, plus numpy, pandas, matplotlib, black and isort.
+
+    Build:
+        apptainer build --fakeroot containers/openmp.sif containers/openmp.def
+
+    Run a script (the working tree is mounted, so this sees your edits):
+        apptainer run containers/openmp.sif escapeBasins.py
+
+    Anything else:
+        apptainer exec containers/openmp.sif black hpcBilliards/
+        apptainer exec containers/openmp.sif python3
+
+    For backend="gpu_openmp" use containers/gpu.def instead: this image has no
+    nvc++ and asking for that backend will fail at the build step.
