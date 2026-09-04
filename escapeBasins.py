@@ -20,6 +20,7 @@ pieces the two holes cut it into.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
+import time
 
 from hpcBilliards import compileScene, getBasins, updateScene
 
@@ -27,7 +28,7 @@ G = 0.5             # the paper's gravitational acceleration
 RB = 1.0            # boundary radius
 HOLE = 0.04         # angular HALF-width of each hole; the paper's 2h is the full width
 ENERGIES = (0.5, 0.7, 1.3, 2.0)   # Fig. 2: two hyperbolic, two mixed phase space
-RESOLUTION = 256    # per axis of the (theta, alpha) grid
+RESOLUTION = 512    # per axis of the (theta, alpha) grid
 COLLISIONS = 1e4   # give up after this many bounces (the paper affords 10^6)
 
 # potential energy is measured from the bottom of the billiard, y = -1, so
@@ -82,8 +83,13 @@ def launch(theta, alpha, energy):
             speed * np.cos(eta), speed * np.sin(eta), allowed)
 
 
-scene = compileScene(openCircle(HOLE), backend="openmp")
+BACKEND = "openmp"  # "serial" or "openmp" or "cuda"
+print(f"compiling scene with backend {BACKEND} ...")
+t0 = time.perf_counter()
+scene = compileScene(openCircle(HOLE), backend=BACKEND)
+t1 = time.perf_counter()
 print(f"{len(scene.types)} objects -> {scene.so_path.name}, cached: {scene.cached}")
+print(f"compileScene took {t1 - t0:.3f} s")
 print(f"hole half-width h = {HOLE}, g = {G}, grid {RESOLUTION}x{RESOLUTION}")
 
 theta = np.linspace(0.0, 2.0 * np.pi, RESOLUTION)
@@ -95,16 +101,19 @@ LABELS = ListedColormap(["#e8e8e8", "#ffffff", "#e8730a", "#101010"])
 NORM = BoundaryNorm([-1.5, -0.5, 0.5, 1.5, 2.5], 4)
 
 figure, axesGrid = plt.subplots(2, 2, figsize=(11.5, 9.0))
-
+total_time = 0.0
 for axes, energy in zip(axesGrid.ravel(), ENERGIES):
     x, y, vx, vy, allowed = launch(thetaGrid, alphaGrid, energy)
 
     # only the energetically possible initial conditions are simulated at all.
     # the paper's criterion is a collision count, not a time, which is what
     # iterations= says: no trajectory is stored either way, just the ending
+    
+    t0 = time.perf_counter()
     esc = getBasins(scene, x[allowed], y[allowed], vx[allowed], vy[allowed],
                     iterations=COLLISIONS, save=["t", "id"])
-
+    t1 = time.perf_counter()
+    total_time += t1 - t0
     picture = np.full(thetaGrid.shape, -1, dtype=np.int32)
     picture[allowed] = esc.id
 
@@ -134,3 +143,4 @@ figure.tight_layout(rect=(0, 0, 1, 0.94))
 figure.savefig("escapeBasins.png", dpi=150)
 print("wrote escapeBasins.png")
 
+print(f"getBasins took {total_time:.3f} s for {len(ENERGIES)} energies")
