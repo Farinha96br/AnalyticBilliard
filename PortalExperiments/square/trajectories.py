@@ -2,8 +2,8 @@
 # one portal cut into each of the two vertical walls
 #
 # the two portals are the same length h, and each one's position is given as the
-# distance from the ground to where the portal STARTS -- so dLeft and dRight are
-# the heights of the lower end, and the portal runs from d up to d + h
+# distance from the ground to the portal's CENTRE -- so dLeft and dRight are the
+# heights of the midpoint, and the portal runs from d - h/2 up to d + h/2
 #
 # this file runs a fan of particles from the middle of the box and draws the two
 # ends of each run over the table it was run on
@@ -23,14 +23,15 @@ g = 0.5
 h = 0.05
 L = SIDE
 
-DMAX = L - h        # the highest a portal can start and still fit on its wall
+DMIN = 0.5 * h      # the lowest a portal can be centred and still fit on its wall
+DMAX = L - 0.5 * h  # and the highest
 
-# the two portals move in opposite directions: hb = DMAX - ha, so as the left one
+# the two portals move in opposite directions: hb = L - ha, so as the left one
 # climbs off the ground the right one comes down from the ceiling to meet it. The
-# step a crossing costs is hb - ha = DMAX - 2*ha, which runs from +DMAX to -DMAX
-# across the sweep and passes through zero exactly in the middle -- an odd number
-# of placements, so that level one is in the list rather than skipped over
-has = np.linspace(0.0, DMAX, 5)
+# step a crossing costs is hb - ha = L - 2*ha, which runs from +(L - h) to
+# -(L - h) across the sweep and passes through zero exactly in the middle -- an
+# odd number of placements, so that level one is in the list rather than skipped
+has = np.linspace(DMIN, DMAX, 5)
 
 E = [0.5]
 ITERATIONS = 1e4    # events per particle, not a duration
@@ -43,7 +44,7 @@ LAUNCH = (0.5 * L, 0.5 * L)     # every particle starts here, in the middle
 SERIES = ["#7a3fa0", "#1baf7a", "#c1272d", "#00420d", "#8a6d3b"]
 
 for ha in has:
-    hb = DMAX - ha          # one goes up, the other comes down to meet it
+    hb = L - ha             # one goes up, the other comes down to meet it
 
     for Es in E:
         print(f"initial energy: {Es}")

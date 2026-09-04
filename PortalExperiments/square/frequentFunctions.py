@@ -27,11 +27,11 @@ SIDE = 1.0          # the box is [0, L] x [0, L], so the ground is y = 0
 def makeTable(g, dLeft, dRight, h, L=SIDE, normalFlip=+1.0, tangentFlip=+1.0):
     """the box, with a portal in each vertical wall unless h closes them up.
 
-    d is where a portal starts, not where it is centred, so its gap runs from d
-    up to d + h. At h = 0 there is no gap: the walls are whole, the portal pair
-    is left out of the scene entirely, and what is left is a plain square box.
-    Passing a zero-length segment instead would not do -- abBuildScene refuses
-    one rather than let it build as NaN and read as a wall that is never hit.
+    d is where a portal is CENTRED, so its gap runs from d - h/2 up to d + h/2.
+    At h = 0 there is no gap: the walls are whole, the portal pair is left out
+    of the scene entirely, and what is left is a plain square box. Passing a
+    zero-length segment instead would not do -- abBuildScene refuses one rather
+    than let it build as NaN and read as a wall that is never hit.
     """
     if h == 0.0:
         return {
@@ -49,17 +49,17 @@ def makeTable(g, dLeft, dRight, h, L=SIDE, normalFlip=+1.0, tangentFlip=+1.0):
             ],
         }
 
-    l0, l1 = dLeft, dLeft + h           # the gap in the left wall
-    r0, r1 = dRight, dRight + h         # the gap in the right wall
+    l0, l1 = dLeft - 0.5 * h, dLeft + 0.5 * h       # the gap in the left wall
+    r0, r1 = dRight - 0.5 * h, dRight + 0.5 * h     # the gap in the right wall
 
     # the portal has to fit on the wall it is cut into. Flush with a corner is
     # allowed -- that is the piece() below -- but hanging off the end is not
     for name, d, lo, hi in (("dLeft", dLeft, l0, l1), ("dRight", dRight, r0, r1)):
         if not (0.0 <= lo and hi <= L):
             raise ValueError(
-                f"{name} = {d} puts a portal of length {h} at [{lo}, {hi}], "
+                f"{name} = {d} centres a portal of length {h} at [{lo}, {hi}], "
                 f"which does not fit on a wall of length {L}: "
-                f"keep 0 <= {name} <= {L - h}")
+                f"keep {0.5 * h} <= {name} <= {L - 0.5 * h}")
 
     # a portal flush with a corner leaves nothing of the wall beside it, and a
     # zero-length lineSegment is degenerate: abBuildScene refuses it rather than
@@ -163,6 +163,22 @@ def seriesToBirkoff(x, y, vx, vy, x0=0.0, y0=0.0):
     alpha = np.arctan2(vy, vx) - wall * (0.5 * np.pi)
 
     return theta, np.cos(alpha)
+
+
+def birkoffToSeries(theta, p, E, g):
+    theta = np.asarray(theta, dtype=float)
+    wall = np.floor(theta).astype(int)
+    s = theta - wall
+
+    zero, one = np.zeros_like(s), np.ones_like(s)
+    x = np.choose(wall, [s, one, 1.0 - s, zero])
+    y = np.choose(wall, [zero, s, one, 1.0 - s])
+
+    allowed = E >= g * y
+    speed = np.sqrt(np.maximum(2.0 * (E - g * y), 0.0))
+    eta = np.arccos(p) + wall * (0.5 * np.pi)
+
+    return x, y, speed * np.cos(eta), speed * np.sin(eta), allowed
 
 
 def heightAt(theta, L=SIDE):
