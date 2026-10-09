@@ -1,6 +1,8 @@
 import numpy as np
 from matplotlib import colormaps
 
+from .scene import Elipse, ElipseArc, Line, LineSegment, SceneError
+
 TRAJECTORY_CMAP = "rainbow"
 DARKEN = 0.8
 
@@ -19,62 +21,66 @@ MARKER_STYLE = {"ls": "none", "ms": 6, "mec": "#101010", "mew": 0.1,
                 "zorder": 6}
 
 
-def _segment(params):
-    x0, y0, x1, y1 = params
-    return np.array([x0, x1]), np.array([y0, y1])
+def _segment(o):
+    return np.array([o.x0, o.x1]), np.array([o.y0, o.y1])
 
 
-def _ellipse(kind, params):
-    cx, cy, a, b, tilt = params[:5]
-    phi0, phi1 = params[5:7] if kind == "elipseArc" else (0.0, 2.0 * np.pi)
+def _ellipse(o):
+    """a whole ellipse, or an arc of one, as a polyline"""
+    phi0, phi1 = ((o.phi0, o.phi1) if isinstance(o, ElipseArc)
+                  else (0.0, 2.0 * np.pi))
     if phi1 <= phi0:
-        phi1 += 2.0 * np.pi
+        phi1 += 2.0 * np.pi  # through zero, not backwards
 
     phi = np.linspace(phi0, phi1, ARC_POINTS)
-    u, v = a * np.cos(phi), b * np.sin(phi)
-    return (cx + u * np.cos(tilt) - v * np.sin(tilt),
-            cy + u * np.sin(tilt) + v * np.cos(tilt))
+    u, v = o.a * np.cos(phi), o.b * np.sin(phi)
+    return (o.cx + u * np.cos(o.tilt) - v * np.sin(o.tilt),
+            o.cy + u * np.sin(o.tilt) + v * np.cos(o.tilt))
 
 
-def _infiniteLine(params, span):
-    a, b, c = params
-    footX, footY = -a * c, -b * c
-    return (np.array([footX - b * span, footX + b * span]),
-            np.array([footY + a * span, footY - a * span]))
+def _infiniteLine(o, span):
+    footX, footY = -o.a * o.c, -o.b * o.c
+    return (np.array([footX - o.b * span, footX + o.b * span]),
+            np.array([footY + o.a * span, footY - o.a * span]))
 
 
-def _curve(kind, params):
-    return _segment(params) if kind == "lineSegment" else _ellipse(kind, params)
+# exact types, no default: an unknown shape must raise, not fall through
+CURVE = {LineSegment: _segment, Elipse: _ellipse, ElipseArc: _ellipse}
+
+
+def _curve(o):
+    try:
+        return CURVE[type(o)](o)
+    except KeyError:
+        raise SceneError(f"plotScene cannot draw {type(o).__name__}") from None
 
 
 def _parts(scene):
-    parts = [(o["type"], o["params"], WALL_STYLE)
-             for o in scene.get("solidObjects", [])]
+    """-> [(shape, style)]. Line is left for the caller"""
+    parts = [(o, WALL_STYLE) for o in scene.solidObjects]
 
-    for k, portal in enumerate(scene.get("portalObjects", [])):
-        parts.append(("lineSegment", portal["entryParams"],
+    for k, portal in enumerate(scene.portalObjects):
+        parts.append((portal.entry,
                       {**PORTAL_STYLE, "label": f"portal {k + 1}",
                        "color": PORTAL_COLORS[k % len(PORTAL_COLORS)]}))
 
-    basins = scene.get("basinObjects") or {}
-    for k, label in enumerate(sorted(basins)):
+    for k, label in enumerate(sorted(scene.basinObjects)):
         color = BASIN_COLORS[k % len(BASIN_COLORS)]
-        for j, o in enumerate(basins[label]):
-            parts.append((o["type"], o["params"],
-                          {**BASIN_STYLE, "color": color,
-                           "label": f"basin {label}" if j == 0 else None}))
+        for j, o in enumerate(scene.basinObjects[label]):
+            parts.append((o, {**BASIN_STYLE, "color": color,
+                              "label": f"basin {label}" if j == 0 else None}))
     return parts
 
 
 def _drawInfiniteLines(axes, lines):
     (xLo, xHi), (yLo, yHi) = axes.get_xlim(), axes.get_ylim()
-    for (a, b, c), _ in lines:
-        xLo, xHi = min(xLo, -a * c), max(xHi, -a * c)
-        yLo, yHi = min(yLo, -b * c), max(yHi, -b * c)
+    for o, _ in lines:
+        xLo, xHi = min(xLo, -o.a * o.c), max(xHi, -o.a * o.c)
+        yLo, yHi = min(yLo, -o.b * o.c), max(yHi, -o.b * o.c)
 
     span = 2.0 * np.hypot(xHi - xLo, yHi - yLo)
-    for params, style in lines:
-        axes.plot(*_infiniteLine(params, span), **style)
+    for o, style in lines:
+        axes.plot(*_infiniteLine(o, span), **style)
 
     axes.set_xlim(xLo, xHi)
     axes.set_ylim(yLo, yHi)
@@ -83,11 +89,11 @@ def _drawInfiniteLines(axes, lines):
 def plotScene(scene, axes):
     parts = _parts(scene)
 
-    for kind, params, style in parts:
-        if kind != "line":
-            axes.plot(*_curve(kind, params), solid_capstyle="butt", **style)
+    for o, style in parts:
+        if not isinstance(o, Line):
+            axes.plot(*_curve(o), solid_capstyle="butt", **style)
 
-    lines = [(params, style) for kind, params, style in parts if kind == "line"]
+    lines = [(o, style) for o, style in parts if isinstance(o, Line)]
     if lines:
         _drawInfiniteLines(axes, lines)
 
