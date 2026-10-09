@@ -106,15 +106,18 @@ print(f"{written.sum()} collisions, theta in [{theta.min():.3f}, "
 figure, (table, birkoff) = plt.subplots(1, 2, figsize=(12.0, 5.2),
                                         facecolor="white")
 
+# plot the table
 plotScene(scene, table)
 
-# a trajectory is only worth drawing if it reached the end of INTERVAL
+# Plot the trajectories
 shown = np.flatnonzero(run.counts >= INTERVAL[1])[:NSHOWN]
 plotTrajectory(table, run.x, run.y, run.vx, run.vy, RESOLUTION, G, shown,
                INTERVAL, lw=0.9, alpha=0.85, zorder=2)
 table.set_title(f"the table, events {INTERVAL[0]} to {INTERVAL[1]} of "
                 f"{len(shown)} particles", fontsize=11, loc="left")
 
+
+# plotting the mapped points on the Birkhoff section. the horizontal axis is the arc length
 birkoff.plot(theta, p, ",", color="black", alpha=0.5)
 for corner in (1.0, 2.0, 3.0):  # theta runs 0 to 4, one unit per wall
     birkoff.axvline(corner, color="tab:blue", lw=0.9, ls="--", alpha=0.8)
