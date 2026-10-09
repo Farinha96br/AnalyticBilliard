@@ -1,16 +1,9 @@
-"""Validate a scene dict, flatten its parameters, and hash its structure.
-
-The split between structure and parameters is the whole design: structure is
-baked into generated C++ and needs a rebuild to change, parameters are pushed
-into the running library. So only structure is hashed.
-"""
 
 import hashlib
+from dataclasses import dataclass, field, fields
 
-# params per object type. a portal carries its entry (4), its exit (4) and the
-# two flips -- the exit is a destination, not a surface, so it is not an object
-# of its own and nothing bounces off it
-NPARAM = {"line": 3, "lineSegment": 4, "elipse": 5, "elipseArc": 7, "portal": 10}
+
+NPARAM = {}  # kind -> parameter count, filled in from the shapes below
 
 MAKER = {
     "line":        "makeLine",
@@ -19,94 +12,229 @@ MAKER = {
     "elipseArc":   "makeElipseArc",
 }
 
-# a basin shape is the same geometry with a different response, so it reuses the
-# maker -- but "a line you bounce off" and "a line that ends the run" are not the
-# same structure, so the prefix keeps them apart in the hash. the label rides
-# along as one more parameter, which is what lets basins be relabelled, and
-# moved, without a rebuild
+# same geometry, different response. kept apart in the hash; label is a param
 BASIN = "basin:"
-for _k, _n in list(NPARAM.items()):
-    if _k in MAKER:
-        NPARAM[BASIN + _k] = _n + 1
 
 
 class SceneError(ValueError):
     pass
 
 
-def _basinSlots(scene):
-    """basinObjects, a dict of label -> shapes, flattened in sorted label order.
+# a shape's fields ARE its params, in the order codegen reads them out of p[].
+# validate() mirrors the C guards in codegen.py, but earlier and by name.
 
-    Sorted so that the same dict always produces the same structure hash: dict
-    order is insertion order, and two callers building the same basins in a
-    different order must not compile two libraries.
+
+@dataclass
+class Line:
+    """a*x + b*y + c = 0, infinite"""
+    a: float
+    b: float
+    c: float
+
+    kind = "line"
+
+    def params(self):
+        return [self.a, self.b, self.c]
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self, where=None):
+        # the sum must be non-zero, not a and b: it underflows while both are
+        # still finite, which the C guard (a == 0 && b == 0) misses
+        if self.a * self.a + self.b * self.b == 0.0:
+            raise SceneError(f"{where or 'Line'}: a*a + b*b underflows to zero "
+                             f"(a={self.a}, b={self.b}), so the normal would be "
+                             f"inf and nothing would ever hit it")
+
+
+@dataclass
+class LineSegment:
+    """(x0, y0) to (x1, y1)"""
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+    kind = "lineSegment"
+
+    def params(self):
+        return [self.x0, self.y0, self.x1, self.y1]
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self, where=None):
+        if self.x0 == self.x1 and self.y0 == self.y1:
+            raise SceneError(f"{where or 'LineSegment'}: zero length, both ends "
+                             f"at ({self.x0}, {self.y0})")
+
+
+@dataclass
+class Elipse:
+    """centre (cx, cy), radii a and b, rotated by tilt radians"""
+    cx: float
+    cy: float
+    a: float
+    b: float
+    tilt: float
+
+    kind = "elipse"
+
+    def params(self):
+        return [self.cx, self.cy, self.a, self.b, self.tilt]
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self, where=None):
+        if self.a == 0.0 or self.b == 0.0:
+            raise SceneError(f"{where or type(self).__name__}: zero radius "
+                             f"(a={self.a}, b={self.b})")
+
+
+@dataclass
+class ElipseArc(Elipse):
+    """an Elipse from phi0 to phi1, radians. phi1 under phi0 wraps through zero"""
+    phi0: float
+    phi1: float
+
+    kind = "elipseArc"
+
+    def params(self):
+        return super().params() + [self.phi0, self.phi1]
+
+
+@dataclass
+class Portal:
+    """enter by `entry`, leave by `exit`. the exit is a destination, not a wall"""
+    entry: LineSegment
+    exit: LineSegment
+    normalFlip: float = 1.0
+    tangentFlip: float = 1.0
+
+    kind = "portal"
+
+    def params(self):
+        return (self.entry.params() + self.exit.params()
+                + [self.normalFlip, self.tangentFlip])
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self, where=None):
+        where = where or "Portal"
+        for name in ("entry", "exit"):
+            side = getattr(self, name)
+            if not isinstance(side, LineSegment):
+                raise SceneError(f"{where}: Portal.{name} must be a "
+                                 f"LineSegment, got {type(side).__name__}")
+            side.validate(f"{where}.{name}")
+
+
+SHAPES = (Line, LineSegment, Elipse, ElipseArc)
+
+# from the classes, so a new field cannot leave codegen on the old count
+NPARAM.update({C.kind: len(fields(C)) for C in SHAPES})
+NPARAM["portal"] = 10  # the exception: 4 fields, two of them segments
+for _k, _n in list(NPARAM.items()):
+    if _k in MAKER:
+        NPARAM[BASIN + _k] = _n + 1
+
+
+@dataclass(kw_only=True)
+class Scene:
+    """What is in the billiard, and under what gravity.
+
+    Keyword-only: the five fields are not interchangeable. Mutable, so a sweep
+    edits and pushes. CompiledScene keeps the scene it was given, so an edit
+    after compiling reaches the library only once updateScene runs.
     """
-    basins = scene.get("basinObjects") or {}
-    if not isinstance(basins, dict):
-        raise SceneError(f"basinObjects must be a dict of label -> list of "
-                         f"shapes, got {type(basins).__name__}")
+    solidObjects: list = field(default_factory=list)
+    portalObjects: list = field(default_factory=list)
+    basinObjects: dict = field(default_factory=dict)
+    g: float = 1.0
+    deadTime: float = 1e-9
 
-    out = []
-    for label in sorted(basins):
-        if not isinstance(label, int) or isinstance(label, bool):
-            raise SceneError(f"basin label {label!r} must be an int")
-        if label < 1:
-            raise SceneError(f"basin label {label} is not usable: 0 is reserved "
-                             f"for a particle that reached tf without escaping, "
-                             f"so labels start at 1")
-        shapes = basins[label]
-        if not shapes:
-            raise SceneError(f"basin {label} has no shapes")
-        for i, o in enumerate(shapes):
-            kind = o.get("type")
-            if kind not in MAKER:
-                raise SceneError(f"basinObjects[{label}][{i}]: unknown type "
-                                 f"{kind!r}, expected one of {sorted(MAKER)}")
-            # checked here, not in flatten: there the label is already appended
-            # and the count it reports would be one more than what was written
-            params = list(o.get("params", []))
-            if len(params) != NPARAM[kind]:
-                raise SceneError(f"basinObjects[{label}][{i}] ({kind}): expected "
-                                 f"{NPARAM[kind]} parameters, got {len(params)}")
-            out.append((BASIN + kind, params + [float(label)]))
-    return out
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self):
+        """Raise SceneError unless every object and constant is usable.
+
+        Runs at construction and at each door into the library, since the
+        objects are mutable. Idempotent and O(objects).
+        """
+        for i, o in enumerate(self.solidObjects):
+            if not isinstance(o, SHAPES):
+                raise SceneError(
+                    f"solidObjects[{i}]: expected one of "
+                    f"{[C.__name__ for C in SHAPES]}, got {type(o).__name__}")
+            o.validate(f"solidObjects[{i}]")
+
+        for i, p in enumerate(self.portalObjects):
+            if not isinstance(p, Portal):
+                raise SceneError(f"portalObjects[{i}]: expected a Portal, got "
+                                 f"{type(p).__name__}")
+            p.validate(f"portalObjects[{i}]")
+
+        if not isinstance(self.basinObjects, dict):
+            raise SceneError(f"basinObjects must be a dict of label -> list of "
+                             f"shapes, got {type(self.basinObjects).__name__}")
+        for label, shapes in self.basinObjects.items():
+            if not isinstance(label, int) or isinstance(label, bool):
+                raise SceneError(f"basin label {label!r} must be an int")
+            if label < 1:
+                raise SceneError(f"basin label {label} is not usable: 0 is "
+                                 f"reserved for a particle that reached tf "
+                                 f"without escaping, so labels start at 1")
+            if not shapes:
+                raise SceneError(f"basin {label} has no shapes")
+            for i, o in enumerate(shapes):
+                if not isinstance(o, SHAPES):
+                    raise SceneError(
+                        f"basinObjects[{label}][{i}]: expected one of "
+                        f"{[C.__name__ for C in SHAPES]}, got "
+                        f"{type(o).__name__}")
+                o.validate(f"basinObjects[{label}][{i}]")
+
+        if not float(self.deadTime) >= 0.0:
+            raise SceneError(f"deadTime must be >= 0, got {self.deadTime}: a "
+                             f"negative one lets the solver re-find the "
+                             f"collision it just resolved, and the run hangs")
+
+    def slots(self):
+        """-> [(kind, params)]: solids, portals, then basins in label order"""
+        out = [(o.kind, o.params()) for o in self.solidObjects]
+        out += [(p.kind, p.params()) for p in self.portalObjects]
+        # sorted, so the same basins built in a different order hash the same
+        for label in sorted(self.basinObjects):
+            for o in self.basinObjects[label]:
+                out.append((BASIN + o.kind, o.params() + [float(label)]))
+        return out
 
 
-def _slots(scene):
-    """the scene as a flat list of (type, params): solids, portals, then basins"""
-    out = []
-    for i, o in enumerate(scene.get("solidObjects", [])):
-        kind = o.get("type")
-        if kind not in MAKER:
-            raise SceneError(f"solidObjects[{i}]: unknown type {kind!r}, "
-                             f"expected one of {sorted(MAKER)}")
-        out.append((kind, list(o.get("params", []))))
-
-    for i, p in enumerate(scene.get("portalObjects", [])):
-        for key in ("entry", "exit"):
-            if p.get(key) != "lineSegment":
-                raise SceneError(f"portalObjects[{i}]: {key!r} must be "
-                                 f"'lineSegment', got {p.get(key)!r}")
-        out.append(("portal", list(p["entryParams"]) + list(p["exitParams"])
-                    + [float(p.get("normalFlip", 1.0)),
-                       float(p.get("tangentFlip", 1.0))]))
-
-    out.extend(_basinSlots(scene))
-    return out
+def _asScene(scene, who):
+    if isinstance(scene, Scene):
+        return scene
+    if isinstance(scene, dict):
+        raise SceneError(
+            f"{who} takes a Scene, not a dict. A scene is now built from typed "
+            f"objects, so a missing angle or a misspelled key is an error where "
+            f"you write it:\n"
+            f"    Scene(g=0.5, solidObjects=[LineSegment(0, 0, 1, 0)])\n"
+            f"Import them from hpcBilliards.")
+    raise SceneError(f"{who} takes a Scene, got {type(scene).__name__}")
 
 
 def flatten(scene):
     """-> (types, params, offsets). params is every object's run end to end."""
-    slots = _slots(scene)
+    slots = scene.slots()
     if not slots:
         raise SceneError("scene has no objects")
 
     types, params, offsets = [], [], []
-    for k, (kind, p) in enumerate(slots):
-        want = NPARAM[kind]
-        if len(p) != want:
-            raise SceneError(f"object {k} ({kind}): expected {want} parameters, "
-                             f"got {len(p)}")
+    for kind, p in slots:
         offsets.append(len(params))
         params.extend(float(v) for v in p)
         types.append(kind)
@@ -114,20 +242,10 @@ def flatten(scene):
 
 
 def structure_hash(scene):
-    """what a rebuild depends on: the slot types, in order, and nothing else.
-
-    deliberately excludes every parameter. hashing those too would make tilting
-    a line look like a new scene and trigger the rebuild this exists to avoid.
-    """
-    types = [k for k, _ in _slots(scene)]
+    """the slot types in order, nothing else: a parameter must not rebuild"""
+    types = [k for k, _ in scene.slots()]
     return hashlib.sha1("|".join(types).encode()).hexdigest(), types
 
 
 def constants(scene):
-    g = float(scene.get("g", 1.0))
-    dead = float(scene.get("deadTime", 1e-9))
-    if not dead >= 0.0:
-        raise SceneError(f"deadTime must be >= 0, got {dead}: a negative one "
-                         f"lets the solver re-find the collision it just "
-                         f"resolved, and the run hangs")
-    return g, dead
+    return float(scene.g), float(scene.deadTime)

@@ -1,6 +1,7 @@
 """ctypes binding: CompiledScene, updateScene, the recorders and getBasins."""
 
 import ctypes
+import dataclasses
 import math
 import warnings
 
@@ -124,6 +125,8 @@ class Record:
 
 class CompiledScene:
     def __init__(self, scene, backend="openmp"):
+        scene = _scene._asScene(scene, "compileScene")
+        scene.validate()
         self.backend = backend
         self.struct_hash, self.types = _scene.structure_hash(scene)
 
@@ -176,8 +179,7 @@ class CompiledScene:
             raise _scene.SceneError(f"library rejected deadTime={dead}")
         self.g = g
 
-        # kept so basins= can be a parameter push: replacing one key of the
-        # scene needs the other keys, and this is the only copy of them
+        # kept so basins= can be a parameter push. mutable: tracks later edits
         self.scene = scene
 
         _, params, offsets = _scene.flatten(scene)
@@ -330,7 +332,8 @@ class CompiledScene:
 
         if basins is not None:
             # the structure check and the parameter push, both already written
-            updateScene({**self.scene, "basinObjects": basins}, self)
+            updateScene(dataclasses.replace(self.scene,
+                                            basinObjects=basins), self)
 
         save = list(DEFAULT_SAVE_ESCAPE if save is None else save)
         bad = [s for s in save if s not in ESCAPE_COLUMNS]
@@ -463,6 +466,8 @@ def updateScene(scene, compiled):
     Only the structure -- the slot types, in order -- is compared. Parameters,
     the portal flips, g and deadTime all go straight through.
     """
+    scene = _scene._asScene(scene, "updateScene")
+    scene.validate()
     h, types = _scene.structure_hash(scene)
     if h != compiled.struct_hash:
         old, new = compiled.types, types
