@@ -1,9 +1,18 @@
-"""ctypes binding: CompiledScene, updateScene, the recorders and getBasins."""
+"""ctypes binding: CompiledScene, updateScene, the recorders and getBasins.
+
+A scene lives in globals inside the .so -- objs[], g and deadTime -- and the
+build cache keys that .so on the scene's STRUCTURE alone, so that changing a
+number never runs the compiler. Two scenes of the same shape therefore compile
+to the same path, and dlopen hands back the same mapping for it: one set of
+globals, shared. _LOADED below tracks which CompiledScene's numbers are in each
+library so a run can put its own back first.
+"""
 
 import ctypes
 import dataclasses
 import math
 import warnings
+import weakref
 
 import numpy as np
 
@@ -31,6 +40,11 @@ EVENT_CODE = {"initial": EV_INITIAL, "bounce": EV_BOUNCE, "portal": EV_PORTAL}
 
 WARN_BYTES = 256 * 1024 ** 2
 MAGIC_NO_COLLISION = 987654321000.0 # types.h: what the solver means by "never"
+
+# so_path -> the CompiledScene whose parameters are in that library right now.
+# Weak, so holding the record does not keep a scene alive; a collected owner
+# just means the next run pushes again, which is correct and merely redundant.
+_LOADED = weakref.WeakValueDictionary()
 
 
 class _Output(ctypes.Structure):
@@ -194,6 +208,26 @@ class CompiledScene:
                 f"object {k} ({self.types[k]}) is degenerate -- a zero-length "
                 f"segment, a line with a == b == 0, or a zero ellipse radius. "
                 f"it would build as NaN and read as an object that is never hit")
+
+        # only now: a push that raised left the library holding nothing usable,
+        # and claiming it would stop the next run from putting it right
+        _LOADED[str(self.so_path)] = self
+
+    def _ensureLoaded(self):
+        """put this scene's numbers back in the library, if someone else's are
+        in it. Called by every run.
+
+        Two CompiledScenes of the same structure share one library, so without
+        this the one pushed later silently decides what BOTH of them compute --
+        and `self.g` would still report the value this object was given, which
+        is the part that makes it hard to notice.
+
+        One push per change of ownership, not one per run. A lone CompiledScene
+        therefore never re-pushes, so a Scene edited without updateScene still
+        does not reach the library: 'edit then push' stays the contract.
+        """
+        if _LOADED.get(str(self.so_path)) is not self:
+            self._push(self.scene)
 
     def recordWithIterations(self, x, y, vx, vy, iterations, stride=1,
                              save=None, eventType=None):
@@ -371,6 +405,7 @@ class CompiledScene:
 
         args = [a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                 for a in (x, y, vx, vy)]
+        self._ensureLoaded()
         rc = (self.lib.abRunBasinsTime(*args, nPart, tf, maxEvents,
                                        ctypes.byref(out)) if byTime else
               self.lib.abRunBasinsIterations(*args, nPart, iterations,
@@ -421,6 +456,7 @@ class CompiledScene:
 
         args = [a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                 for a in (x, y, vx, vy)]
+        self._ensureLoaded()
         rc = call(args, nPart, out)
         if rc != 0:
             raise RuntimeError(f"run failed with code {rc}")
