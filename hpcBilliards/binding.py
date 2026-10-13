@@ -11,7 +11,6 @@ library so a run can put its own back first.
 import ctypes
 import dataclasses
 import math
-import warnings
 import weakref
 
 import numpy as np
@@ -38,7 +37,6 @@ ESCAPE_COLUMNS = ["t", "x", "y", "vx", "vy", "Energy", "id"]
 EV_INITIAL, EV_BOUNCE, EV_PORTAL = 0, 1, 2
 EVENT_CODE = {"initial": EV_INITIAL, "bounce": EV_BOUNCE, "portal": EV_PORTAL}
 
-WARN_BYTES = 256 * 1024 ** 2
 MAGIC_NO_COLLISION = 987654321000.0 # types.h: what the solver means by "never"
 
 # so_path -> the CompiledScene whose parameters are in that library right now.
@@ -432,8 +430,6 @@ class CompiledScene:
         if not (y.size == vx.size == vy.size == nPart):
             raise ValueError("x, y, vx, vy must be the same length")
 
-        self._warn_memory(who, nPart, rows, save)
-
         cols, bits, dummy = {}, 0, np.zeros(1, dtype=np.float64)
         idummy = np.zeros(1, dtype=np.int32)
         for name in TABLE_COLUMNS:
@@ -479,17 +475,6 @@ class CompiledScene:
                 out[i, :counts[i]] = a[i][keep[i]]
             cols[name] = out
         return Record(cols, counts, rec._order)
-
-    @staticmethod
-    def _warn_memory(who, nPart, rows, save):
-        per_row = sum(4 if s == "evType" else 8 for s in save)
-        nbytes = nPart * rows * per_row
-        if nbytes > WARN_BYTES:
-            warnings.warn(
-                f"{who} will allocate {nbytes / 1024**2:.0f} MB "
-                f"({nbytes / 1024**3:.2f} GB): {nPart} particles x {rows} "
-                f"rows x {len(save)} columns. narrow save=, raise stride= or "
-                f"raise dt= to shrink it")
 
 
 def compileScene(scene, backend="openmp"):
