@@ -13,9 +13,9 @@ def circle(R=1.0, g=0.0, deadTime=1e-9):
                  solidObjects=[Elipse(0.0, 0.0, R, R, 0.0)])
 
 
-def oval(a=1.0, b=0.5, tilt=0.0, g=0.0, deadTime=1e-9):
+def oval(a=1.0, b=0.5, theta0=0.0, g=0.0, deadTime=1e-9):
     return Scene(g=g, deadTime=deadTime,
-                 solidObjects=[Elipse(0.0, 0.0, a, b, tilt)])
+                 solidObjects=[Elipse(0.0, 0.0, a, b, theta0)])
 
 
 def stadium(r=1.0, a=1.0, g=0.0, deadTime=1e-9):
