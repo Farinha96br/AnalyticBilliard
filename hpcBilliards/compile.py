@@ -47,9 +47,10 @@ def _gompRpath(cxx):
 # -ffp-contract=off / -Kieee -Mnofma are what keep the three outputs bit for bit
 # identical: no FMA fusion, and no non-IEEE division or sqrt
 BACKENDS = {
-    "linear":     (lambda: [os.environ.get("AB_CXX", "g++"), "-O2", "-ffp-contract=off"]),
+    "linear":     (lambda: [os.environ.get("AB_CXX", "g++"), "-O2", "-ffp-contract=off",
+                            "-fno-gnu-unique"]),
     "openmp":     (lambda: [os.environ.get("AB_CXX", "g++"), "-O2", "-ffp-contract=off",
-                            "-fopenmp", "-foffload=disable"]
+                            "-fno-gnu-unique", "-fopenmp", "-foffload=disable"]
                            + _gompRpath(os.environ.get("AB_CXX", "g++"))),
 
     "gpu_openmp": (lambda: [NVCXX, "-O2", "-Kieee", "-Mnofma",
