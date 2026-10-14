@@ -13,7 +13,7 @@ BASIN_COLORS = ["#c1272d", "#1baf7a", "#00420d", "#b8860b"]
 WALL_STYLE = {"color": WALL_COLOR, "lw": 1.5, "zorder": 3}
 PORTAL_STYLE = {"lw": 3.0, "zorder": 5}
 BASIN_STYLE = {"lw": 3.0, "zorder": 4}
-TRAJECTORY_STYLE = {"lw": 0.5}
+TRAJECTORY_STYLE = {"lw": 0.2, "alpha": 0.6}
 
 ARC_POINTS = 361
 
