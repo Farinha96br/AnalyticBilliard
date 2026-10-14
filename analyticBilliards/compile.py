@@ -5,9 +5,13 @@ ones already proven to hold the three backends bitwise identical.
 """
 
 import hashlib
+import logging
 import os
 import pathlib
 import subprocess
+import time
+
+log = logging.getLogger(__name__)
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 CPP = REPO / "cpp"          # every .h and .cpp lives here
@@ -81,6 +85,8 @@ def build(header_src, backend):
     workdir = CACHE / f"{backend}_{key}"
     so = workdir / "libab.so"
     if so.exists():
+        log.info("cached %s build", backend)
+        log.debug("so=%s", so)
         return so, True
 
     workdir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +95,11 @@ def build(header_src, backend):
     cmd = (flags + ["-shared", "-fPIC", f"-I{CPP}", f"-I{workdir}",
                     str(CPP / "UsableFunctions.cpp")]
            + link + ["-o", str(so)])
+    log.debug("cmd: %s", " ".join(cmd))
+    t0 = time.perf_counter()
     r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.stderr.strip():
+        log.debug("stderr: %s", r.stderr.strip())
     if r.returncode != 0:
         raise BuildError("compile failed:\n  " + " ".join(cmd) + "\n" + r.stderr)
 
@@ -100,4 +110,6 @@ def build(header_src, backend):
         raise BuildError("gpu_openmp built no device kernel -- the target region "
                          "did not compile for the GPU, so this backend would "
                          "silently run on the host:\n" + r.stderr)
+    log.info("compiled %s in %.2f s", backend, time.perf_counter() - t0)
+    log.debug("so=%s", so)
     return so, False

@@ -32,6 +32,9 @@ Scene is mutable, so that is an edit and a push:
     updateScene(scene, compiled)                # no compiler runs
 """
 
+import logging
+import os
+
 from .binding import (CompiledScene, Escape, Record, compileScene, getBasins,
                       updateScene)
 from .scene import (Elipse, ElipseArc, Line, LineSegment, Portal, Scene,
@@ -40,3 +43,14 @@ from .scene import (Elipse, ElipseArc, Line, LineSegment, Portal, Scene,
 __all__ = ["compileScene", "updateScene", "getBasins", "CompiledScene",
            "Record", "Escape", "SceneError", "Scene", "Line", "LineSegment",
            "Elipse", "ElipseArc", "Portal"]
+
+# silent unless the application configures logging, or AB_LOG asks for it:
+#   AB_LOG=INFO python run.py      (DEBUG, INFO, WARNING, ...)
+_log = logging.getLogger(__name__)
+_log.addHandler(logging.NullHandler())
+if os.environ.get("AB_LOG"):
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    _log.addHandler(_handler)
+    _log.setLevel(os.environ["AB_LOG"].upper())
+    _log.propagate = False # or a basicConfig in the script prints it twice

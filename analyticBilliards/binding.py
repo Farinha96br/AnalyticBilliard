@@ -8,14 +8,20 @@ globals, shared. _LOADED below tracks which CompiledScene's numbers are in each
 library so a run can put its own back first.
 """
 
+import collections
 import ctypes
 import dataclasses
+import logging
 import math
+import os
+import time
 import weakref
 
 import numpy as np
 
 from . import codegen, compile as _compile, scene as _scene
+
+log = logging.getLogger(__name__)
 
 # must match enum abColumn in UsableFunctions.cpp
 COLUMN_BIT = {"t": 1 << 0, "x": 1 << 1, "y": 1 << 2, "vx": 1 << 3,
@@ -34,7 +40,7 @@ DEFAULT_SAVE_ESCAPE = ["t", "x", "y", "vx", "vy", "id"]
 TABLE_COLUMNS = ["t", "x", "y", "vx", "vy", "Energy", "evType"]
 ESCAPE_COLUMNS = ["t", "x", "y", "vx", "vy", "Energy", "id"]
 
-EV_INITIAL, EV_BOUNCE, EV_PORTAL = 0, 1, 2
+EV_INITIAL, EV_BOUNCE, EV_PORTAL, EV_ABSORB = 0, 1, 2, 3  # physics.h
 EVENT_CODE = {"initial": EV_INITIAL, "bounce": EV_BOUNCE, "portal": EV_PORTAL}
 
 MAGIC_NO_COLLISION = 987654321000.0 # types.h: what the solver means by "never"
@@ -43,6 +49,41 @@ MAGIC_NO_COLLISION = 987654321000.0 # types.h: what the solver means by "never"
 # Weak, so holding the record does not keep a scene alive; a collected owner
 # just means the next run pushes again, which is correct and merely redundant.
 _LOADED = weakref.WeakValueDictionary()
+
+
+def _estimate(nPart, rows, save):
+    """-> bytes a run allocates: its columns, counts and the 4 input copies"""
+    perRow = sum(4 if name in ("evType", "id") else 8 for name in save)
+    return nPart * (rows * perRow + 4 + 4 * 8)
+
+
+def _fmtBytes(n):
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if n < 1024 or unit == "GiB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def _checkMemory(nbytes):
+    try:
+        free = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        return # not every platform can say
+    if nbytes > 0.5 * free:
+        log.warning("mem≈%s > 50%% free RAM", _fmtBytes(nbytes))
+
+
+def _fmtParams(p):
+    return np.array2string(np.asarray(p), precision=4, separator=", ")
+
+
+def _stopCauses(types, maxEvents=None):
+    """what can end a run before its limit, given what this scene holds"""
+    causes = (["basin"] if any(t.startswith(_scene.BASIN) for t in types)
+              else []) + ["no further collision"]
+    if maxEvents is not None:
+        causes.append(f"maxEvents={maxEvents}")
+    return ", ".join(causes[:-1]) + (" or " if len(causes) > 1 else "") + causes[-1]
 
 
 class _Output(ctypes.Structure):
@@ -141,6 +182,9 @@ class CompiledScene:
         scene.validate()
         self.backend = backend
         self.struct_hash, self.types = _scene.structure_hash(scene)
+        kinds = collections.Counter(self.types)
+        log.info("scene: %d obj (%s)", len(self.types),
+                 ", ".join(f"{n} {k}" for k, n in kinds.items()))
 
         header = codegen.generate(self.types)
         self.so_path, self.cached = _compile.build(header, backend)
@@ -164,6 +208,9 @@ class CompiledScene:
             raise RuntimeError(
                 f"{self.so_path} holds {self.lib.abObjectCount()} objects but "
                 f"this scene has {len(self.types)}: stale cache entry")
+        log.debug("hash=%s threads=%s onDevice=%s", self.struct_hash[:12],
+                  os.environ.get("OMP_NUM_THREADS", os.cpu_count()),
+                  self.onDevice)
         self._push(scene)
 
     def _declare(self):
@@ -211,6 +258,33 @@ class CompiledScene:
         # and claiming it would stop the next run from putting it right
         _LOADED[str(self.so_path)] = self
 
+        last = getattr(self, "_last", None)
+        if last is None:
+            log.debug("push: g=%g deadTime=%g params=%d", g, dead, len(params))
+        else:
+            self._logChanges(last, g, dead, params, offsets)
+        self._last = (g, dead, params)
+
+    def _logChanges(self, last, g, dead, params, offsets):
+        """one line per thing this push changed. the structure is the same, so
+        the offsets of the last push are these ones too"""
+        oldG, oldDead, oldParams = last
+        changed = False
+        if g != oldG:
+            log.info("update: g %g→%g", oldG, g)
+            changed = True
+        if dead != oldDead:
+            log.info("update: deadTime %g→%g", oldDead, dead)
+            changed = True
+        ends = list(offsets[1:]) + [len(params)]
+        for k, (a, b) in enumerate(zip(offsets, ends)):
+            if params[a:b] != oldParams[a:b]:
+                log.info("update: obj %d %s %s→%s", k, self.types[k],
+                         _fmtParams(oldParams[a:b]), _fmtParams(params[a:b]))
+                changed = True
+        if not changed:
+            log.debug("update: no change")
+
     def _ensureLoaded(self):
         """put this scene's numbers back in the library, if someone else's are
         in it. Called by every run.
@@ -225,6 +299,7 @@ class CompiledScene:
         does not reach the library: 'edit then push' stays the contract.
         """
         if _LOADED.get(str(self.so_path)) is not self:
+            log.debug("re-push: shared .so")
             self._push(self.scene)
 
     def recordWithIterations(self, x, y, vx, vy, iterations, stride=1,
@@ -249,10 +324,24 @@ class CompiledScene:
         if eventType is not None and "evType" not in save:
             save.append("evType")  # needed to apply the filter
 
+        rows = iterations // stride + 1
         rec = self._run(
-            x, y, vx, vy, iterations // stride + 1, save, "recordWithIterations",
+            x, y, vx, vy, rows, save, "recordWithIterations",
             lambda args, nPart, out: self.lib.abRunIterations(
-                *args, nPart, iterations, stride, ctypes.byref(out)))
+                *args, nPart, iterations, stride, ctypes.byref(out)),
+            f"iter={iterations} stride={stride}")
+
+        early = np.flatnonzero(rec.counts < rows)
+        if early.size:
+            if "evType" in save:
+                last = rec.evType[early, rec.counts[early] - 1]
+                nAbs = int((last == EV_ABSORB).sum())
+                why = (f"{nAbs} absorbed by basin, "
+                       f"{early.size - nAbs} no further collision")
+            else:
+                why = _stopCauses(self.types)
+            log.info("%d of %d particles stopped before iter=%d: %s",
+                     early.size, rec.counts.size, iterations, why)
         return self._filter(rec, eventType) if eventType else rec
 
     def recordWithTime(self, x, y, vx, vy, tf, dt, save=None, maxEvents=10 ** 7):
@@ -284,11 +373,18 @@ class CompiledScene:
                 "a grid row is a sample of a flight, not an event, so it has "
                 "no evType. use recordWithIterations for the event table")
 
-        return self._run(
-            x, y, vx, vy, int(math.floor(tf / dt + 1e-9)) + 1, save,
-            "recordWithTime",
+        rows = int(math.floor(tf / dt + 1e-9)) + 1
+        rec = self._run(
+            x, y, vx, vy, rows, save, "recordWithTime",
             lambda args, nPart, out: self.lib.abRunSampled(
-                *args, nPart, dt, int(maxEvents), ctypes.byref(out)))
+                *args, nPart, dt, int(maxEvents), ctypes.byref(out)),
+            f"tf={tf:g} dt={dt:g}")
+
+        early = int((rec.counts < rows).sum())
+        if early:
+            log.info("%d of %d particles stopped before tf=%g (%s)", early,
+                     rec.counts.size, tf, _stopCauses(self.types, int(maxEvents)))
+        return rec
 
     def getBasins(self, x, y, vx=None, vy=None, tf=None, iterations=None,
                   basins=None, save=None, maxEvents=None):
@@ -403,21 +499,33 @@ class CompiledScene:
 
         args = [a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                 for a in (x, y, vx, vy)]
+        nbytes = _estimate(nPart, 1, save)
+        log.info("basins: %d particles, %s, mem≈%s", nPart,
+                 f"tf={tf:g} maxEvents={maxEvents}" if byTime
+                 else f"iter={iterations}", _fmtBytes(nbytes))
+        _checkMemory(nbytes)
+
         self._ensureLoaded()
+        t0 = time.perf_counter()
         rc = (self.lib.abRunBasinsTime(*args, nPart, tf, maxEvents,
                                        ctypes.byref(out)) if byTime else
               self.lib.abRunBasinsIterations(*args, nPart, iterations,
                                              ctypes.byref(out)))
         if rc != 0:
             raise RuntimeError(f"run failed with code {rc}")
+        log.info("done in %.3f s", time.perf_counter() - t0)
 
-        return Escape(cols, save)
+        esc = Escape(cols, save)
+        if "id" in cols:
+            log.info("tally: %s", esc.tally())
+        return esc
 
-    def _run(self, x, y, vx, vy, rows, save, who, call):
+    def _run(self, x, y, vx, vy, rows, save, who, call, info):
         """allocate the columns, let `call` fill them, wrap them in a Record.
 
         Everything the two recorders share. They differ only in how many rows
         they work out they need, and which entry point they hand them to.
+        `info` is their own parameters, for the log line.
         """
         bad = [s for s in save if s not in TABLE_COLUMNS]
         if bad:
@@ -452,10 +560,19 @@ class CompiledScene:
 
         args = [a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                 for a in (x, y, vx, vy)]
+        nbytes = _estimate(nPart, rows, save)
+        log.info("run: %d particles x %d rows, %s, mem≈%s", nPart, rows, info,
+                 _fmtBytes(nbytes))
+        _checkMemory(nbytes)
+
         self._ensureLoaded()
+        t0 = time.perf_counter()
         rc = call(args, nPart, out)
         if rc != 0:
             raise RuntimeError(f"run failed with code {rc}")
+        log.info("done in %.3f s", time.perf_counter() - t0)
+        if counts.size:
+            log.debug("counts=[%d..%d]", counts.min(), counts.max())
 
         return Record(cols, counts, save)
 
@@ -467,6 +584,7 @@ class CompiledScene:
             keep[i, rec.counts[i]:] = False
         counts = keep.sum(axis=1).astype(np.int32)
         m = int(counts.max()) if counts.size else 0
+        log.debug("filter: kept %d/%d rows", counts.sum(), rec.counts.sum())
 
         cols = {}
         for name, a in rec._cols.items():
