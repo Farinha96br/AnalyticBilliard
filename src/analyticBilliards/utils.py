@@ -7,7 +7,11 @@ TRAJECTORY_CMAP = "rainbow"
 DARKEN = 0.8
 
 WALL_COLOR = "#101010"
-PORTAL_COLORS = ["#e8730a", "#1f77b4", "#7a3fa0", "#8a6d3b"]
+# Portal 2, one player's pair per two portals: Chell (orange, blue), then the
+# co-op robots Atlas (light blue, purple) and P-body (yellow, red)
+PORTAL_COLORS = ["#e8730a", "#1f77b4",   # Chell
+                 "#5ec8f2", "#7a3fa0",   # Atlas
+                 "#f2c12e", "#c8281e"]   # P-body
 BASIN_COLORS = ["#c1272d", "#1baf7a", "#00420d", "#b8860b"]
 
 WALL_STYLE = {"color": WALL_COLOR, "lw": 1.5, "zorder": 3}
