@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analyticBilliards"
+version = "0.1.0"
+description = "A fast semi-symbolic solver for gravitational (or straight) billiards"
+readme = "readme.md"
+requires-python = ">=3.10"
+dependencies = ["numpy", "matplotlib"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# The C++ in src/cpp is compiled at run time from its place in the source tree
+# (see compile.py), so install in editable mode: pip install -e .

@@ -2,6 +2,16 @@
 
 Analystic Billiar (AB) is a fast semi-symbolic solver for gravitational (or straight) billiards that solve collisions iteratively.
 
+## Install
+
+The package lives in `src/`. Install it in editable mode, once, into your
+environment:
+
+    pip install -e .
+
+Editable mode is required, not just convenient: the C++ in `src/cpp/` is compiled
+at run time from its place in the source tree.
+
 ## Tests
 
 Run `pytest tests/` from the repo root; it needs only `numpy`, `pytest` and a
@@ -9,7 +19,7 @@ Run `pytest tests/` from the repo root; it needs only `numpy`, `pytest` and a
 two building and later runs come straight out of `.abcache/`. It uses the
 `linear` backend by default — pass `--backend openmp`, or `gpu_openmp` given a
 device, to run the same checks against another one. Note that the build cache
-does not notice edits to the headers in `cpp/`, so clear it with
+does not notice edits to the headers in `src/cpp/`, so clear it with
 `rm -rf .abcache` before testing a change to the physics.
 
 On `gpu_openmp` the whole suite passes and the results are bit-for-bit the ones

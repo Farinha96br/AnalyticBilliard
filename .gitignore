@@ -8,3 +8,4 @@
 *.abcache
 *.sif
 refs/
+*.egg-info
