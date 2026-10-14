@@ -13,9 +13,9 @@ import time
 
 log = logging.getLogger(__name__)
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
-CPP = REPO / "cpp"          # every .h and .cpp lives here
-CACHE = REPO / ".abcache"
+SRC = pathlib.Path(__file__).resolve().parent.parent  # src/
+CPP = SRC / "cpp"           # every .h and .cpp lives here
+CACHE = SRC.parent / ".abcache"  # at the repo root, next to src/
 
 NVCXX = os.environ.get(
     "AB_NVCXX", "/opt/nvidia/hpc_sdk/Linux_x86_64/26.1/compilers/bin/nvc++")

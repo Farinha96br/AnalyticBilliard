@@ -64,13 +64,28 @@ def _fmtBytes(n):
         n /= 1024
 
 
-def _checkMemory(nbytes):
+def _availableRAM():
+    """-> bytes the system can hand out, or None if it cannot say.
+
+    MemAvailable counts the page cache the kernel would drop for us; the free
+    page count does not, and on a busy machine reads as almost nothing"""
     try:
-        free = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    try:
+        return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
     except (ValueError, OSError, AttributeError):
-        return # not every platform can say
-    if nbytes > 0.5 * free:
-        log.warning("mem≈%s > 50%% free RAM", _fmtBytes(nbytes))
+        return None # not every platform can say
+
+
+def _checkMemory(nbytes):
+    free = _availableRAM()
+    if free is not None and nbytes > 0.5 * free:
+        log.warning("mem≈%s > 50%% available RAM", _fmtBytes(nbytes))
 
 
 def _fmtParams(p):

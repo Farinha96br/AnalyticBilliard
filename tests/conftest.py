@@ -1,8 +1,7 @@
 """The --backend option and the compiled scenes the suite shares.
 
-analyticBilliards is not installed -- there is no pyproject.toml and no setup.py --
-so it imports as a top-level package from the repo root and nowhere else. The
-sys.path line below is what lets `pytest` run from any directory.
+The package lives in src/. `pip install -e .` makes it importable everywhere;
+the sys.path line below lets `pytest` run from any directory even without that.
 
 Nothing here imports matplotlib. Importing pyplot before compileScene makes an
 OpenMP target region fall back to the host silently, which CompiledScene raises
@@ -14,9 +13,9 @@ import sys
 
 import pytest
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
-if str(REPO) not in sys.path:
-    sys.path.insert(0, str(REPO))
+SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from analyticBilliards import compileScene            # noqa: E402
 from analyticBilliards.compile import BACKENDS        # noqa: E402
