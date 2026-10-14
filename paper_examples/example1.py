@@ -1,29 +1,34 @@
+import os
+os.environ.setdefault("AB_LOG", "DEBUG")  # AB_LOG=DEBUG for details
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 from matplotlib.ticker import MaxNLocator
-from analyticBilliards import compileScene
-from analyticBilliards.commomTables import circle
+from analyticBilliards import Elipse, Scene, compileScene
 from analyticBilliards.utils import plotScene, plotTrajectory
 
 plt.rcParams.update({"text.usetex": True, "font.family": "serif"})
 
-scene = circle(R=1.0, g=1.0)
+# unit circle: centre (0, 0), radii a = b = 1, no tilt
+scene = Scene(g=9.8, solidObjects=[Elipse(0.0, 0.0, 1.0, 1.0, 0.0)])
 billiard = compileScene(scene, backend="openmp")
 
 n = 3
-x0, y0 = np.zeros(n), np.full(n, -0.5)
+x0, y0 = np.zeros(n), np.full(n, 0.3)
 angle = np.linspace(0.3, 1.2, n)
 vx0, vy0 = np.cos(angle), np.sin(angle)
 
-run = billiard.recordWithIterations(x0, y0, vx0, vy0, iterations=50)
+# one row per collision (row 0 = initial state); position and velocity are
+# all plotTrajectory needs to redraw the parabolas between collisions
+run = billiard.recordWithIterations(x0, y0, vx0, vy0, iterations=200,
+                                    save=["x", "y", "vx", "vy"])
 
 fig, ax = plt.subplots(figsize=(4, 4))
 plotScene(scene, ax)
 plotTrajectory(ax, run.x, run.y, run.vx, run.vy, resolution=50, g=scene.g,
-               particles=range(n), interval=(0, 50))
+               particles=range(n), interval=(0, 200))
 ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 ax.yaxis.set_major_locator(MaxNLocator(integer=True))
 for ext in ("png", "pdf"):
