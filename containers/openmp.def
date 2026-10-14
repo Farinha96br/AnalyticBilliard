@@ -61,7 +61,7 @@ From: ubuntu:24.04
         apptainer run containers/openmp.sif escapeBasins.py
 
     Anything else:
-        apptainer exec containers/openmp.sif black analyticBilliards/
+        apptainer exec containers/openmp.sif black src/analyticBilliards/
         apptainer exec containers/openmp.sif python3
 
     For backend="gpu_openmp" use containers/gpu.def instead: this image has no
