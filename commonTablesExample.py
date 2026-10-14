@@ -4,7 +4,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc
 
-from analyticBilliards import commomTables as T
+from analyticBilliards import commonTables as T
 from analyticBilliards.utils import plotScene
 
 CM = 1 / 2.54
@@ -159,5 +159,5 @@ for ax, (title, scene, spec) in zip(axes.ravel(), TABLES):
 
 figure.subplots_adjust(left=0.005, right=0.995, top=0.94, bottom=0.005,
                        wspace=0.04, hspace=0.14)
-figure.savefig("commomTablesExample.pdf")
-figure.savefig("commomTablesExample.png", dpi=300)
+figure.savefig("commonTablesExample.pdf")
+figure.savefig("commonTablesExample.png", dpi=300)

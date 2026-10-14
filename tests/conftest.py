@@ -58,7 +58,7 @@ def squareBox(backend):
 
 @pytest.fixture(scope="session")
 def roundBilliard(backend):
-    """one elipse"""
+    """one ellipse"""
     return _compiled(helpers.circleScene(g=1.0), backend)
 
 

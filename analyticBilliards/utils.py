@@ -1,7 +1,7 @@
 import numpy as np
 from matplotlib import colormaps
 
-from .scene import Elipse, ElipseArc, Line, LineSegment, SceneError
+from .scene import Ellipse, EllipseArc, Line, LineSegment, SceneError
 
 TRAJECTORY_CMAP = "rainbow"
 DARKEN = 0.8
@@ -28,7 +28,7 @@ def _segment(o):
 
 def _ellipse(o):
     """a whole ellipse, or an arc of one, as a polyline"""
-    phi0, phi1 = ((o.phi0, o.phi1) if isinstance(o, ElipseArc)
+    phi0, phi1 = ((o.phi0, o.phi1) if isinstance(o, EllipseArc)
                   else (0.0, 2.0 * np.pi))
     if phi1 <= phi0:
         phi1 += 2.0 * np.pi  # through zero, not backwards
@@ -46,7 +46,7 @@ def _infiniteLine(o, span):
 
 
 # exact types, no default: an unknown shape must raise, not fall through
-CURVE = {LineSegment: _segment, Elipse: _ellipse, ElipseArc: _ellipse}
+CURVE = {LineSegment: _segment, Ellipse: _ellipse, EllipseArc: _ellipse}
 
 
 def _curve(o):

@@ -12,7 +12,7 @@ import math
 
 import numpy as np
 
-from analyticBilliards import Elipse, Line, LineSegment, Portal, Scene, updateScene
+from analyticBilliards import Ellipse, Line, LineSegment, Portal, Scene, updateScene
 
 # an exact claim -- a reflected speed, a teleported height -- is asserted at the
 # width of double rounding, not at a physics tolerance
@@ -53,9 +53,9 @@ def squareScene(g):
 
 
 def circleScene(g, R=RADIUS):
-    """a circular billiard. There is no circle class: it is an equal-radii Elipse,
+    """a circular billiard. There is no circle class: it is an equal-radii Ellipse,
     which means the hit time is the Ferrari quartic, the sharpest numerics here."""
-    return Scene(g=g, solidObjects=[Elipse(0.0, 0.0, R, R, 0.0)])
+    return Scene(g=g, solidObjects=[Ellipse(0.0, 0.0, R, R, 0.0)])
 
 
 def portalScene(normalFlip=1.0, tangentFlip=1.0, exitSeg=None, g=0.0):

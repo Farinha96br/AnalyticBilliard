@@ -6,13 +6,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 from matplotlib.ticker import MaxNLocator
-from analyticBilliards import Elipse, Scene, compileScene
+from analyticBilliards import Ellipse, Scene, compileScene
 from analyticBilliards.utils import plotScene, plotTrajectory
 
 plt.rcParams.update({"text.usetex": True, "font.family": "serif"})
 
 # unit circle: centre (0, 0), radii a = b = 1, no tilt
-scene = Scene(g=9.8, solidObjects=[Elipse(0.0, 0.0, 1.0, 1.0, 0.0)])
+scene = Scene(g=9.8, solidObjects=[Ellipse(0.0, 0.0, 1.0, 1.0, 0.0)])
 billiard = compileScene(scene, backend="openmp")
 
 n = 3

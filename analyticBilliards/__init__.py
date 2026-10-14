@@ -7,7 +7,7 @@
     rec = compiled.recordWithIterations(x, y, vx, vy, iterations=1000)
     ser = compiled.recordWithTime(x, y, vx, vy, tf=100.0, dt=0.01)
 
-Scenes are built from typed objects -- Line, LineSegment, Elipse, ElipseArc and
+Scenes are built from typed objects -- Line, LineSegment, Ellipse, EllipseArc and
 Portal -- so a missing parameter or a misspelled name is an error where you
 wrote it, not a scene that compiles and quietly behaves wrong.
 
@@ -37,12 +37,12 @@ import os
 
 from .binding import (CompiledScene, Escape, Record, compileScene, getBasins,
                       updateScene)
-from .scene import (Elipse, ElipseArc, Line, LineSegment, Portal, Scene,
+from .scene import (Ellipse, EllipseArc, Line, LineSegment, Portal, Scene,
                     SceneError)
 
 __all__ = ["compileScene", "updateScene", "getBasins", "CompiledScene",
            "Record", "Escape", "SceneError", "Scene", "Line", "LineSegment",
-           "Elipse", "ElipseArc", "Portal"]
+           "Ellipse", "EllipseArc", "Portal"]
 
 # silent unless the application configures logging, or AB_LOG asks for it:
 #   AB_LOG=INFO python run.py      (DEBUG, INFO, WARNING, ...)

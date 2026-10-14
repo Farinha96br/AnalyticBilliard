@@ -8,8 +8,8 @@ NPARAM = {}  # kind -> parameter count, filled in from the shapes below
 MAKER = {
     "line":        "makeLine",
     "lineSegment": "makeLineSegment",
-    "elipse":      "makeElipse",
-    "elipseArc":   "makeElipseArc",
+    "ellipse":      "makeEllipse",
+    "ellipseArc":   "makeEllipseArc",
 }
 
 # same geometry, different response. kept apart in the hash; label is a param
@@ -71,7 +71,7 @@ class LineSegment:
 
 
 @dataclass
-class Elipse:
+class Ellipse:
     """centre (cx, cy), radii a and b, rotated by tilt radians"""
     cx: float
     cy: float
@@ -79,7 +79,7 @@ class Elipse:
     b: float
     tilt: float
 
-    kind = "elipse"
+    kind = "ellipse"
 
     def params(self):
         return [self.cx, self.cy, self.a, self.b, self.tilt]
@@ -94,12 +94,12 @@ class Elipse:
 
 
 @dataclass
-class ElipseArc(Elipse):
-    """an Elipse from phi0 to phi1, radians. phi1 under phi0 wraps through zero"""
+class EllipseArc(Ellipse):
+    """an Ellipse from phi0 to phi1, radians. phi1 under phi0 wraps through zero"""
     phi0: float
     phi1: float
 
-    kind = "elipseArc"
+    kind = "ellipseArc"
 
     def params(self):
         return super().params() + [self.phi0, self.phi1]
@@ -132,7 +132,7 @@ class Portal:
             side.validate(f"{where}.{name}")
 
 
-SHAPES = (Line, LineSegment, Elipse, ElipseArc)
+SHAPES = (Line, LineSegment, Ellipse, EllipseArc)
 
 # from the classes, so a new field cannot leave codegen on the old count
 NPARAM.update({C.kind: len(fields(C)) for C in SHAPES})

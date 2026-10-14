@@ -18,8 +18,8 @@ from .scene import BASIN, MAKER, NPARAM
 GUARD = {
     "line":        "if (p[{o}] == 0.0 && p[{o}+1] == 0.0) return {k}+1;",
     "lineSegment": "if (p[{o}] == p[{o}+2] && p[{o}+1] == p[{o}+3]) return {k}+1;",
-    "elipse":      "if (p[{o}+2] == 0.0 || p[{o}+3] == 0.0) return {k}+1;",
-    "elipseArc":   "if (p[{o}+2] == 0.0 || p[{o}+3] == 0.0) return {k}+1;",
+    "ellipse":      "if (p[{o}+2] == 0.0 || p[{o}+3] == 0.0) return {k}+1;",
+    "ellipseArc":   "if (p[{o}+2] == 0.0 || p[{o}+3] == 0.0) return {k}+1;",
     "portal":      "if ((p[{o}] == p[{o}+2] && p[{o}+1] == p[{o}+3]) ||\n"
                    "        (p[{o}+4] == p[{o}+6] && p[{o}+5] == p[{o}+7])) return {k}+1;",
 }

@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use("Agg")  # straight to a file, no window
 import matplotlib.pyplot as plt
 
-from analyticBilliards import (Elipse, LineSegment, Portal, Scene, compileScene)
+from analyticBilliards import (Ellipse, LineSegment, Portal, Scene, compileScene)
 from analyticBilliards.utils import plotScene, plotTrajectory, toBirkoff
 
 # geometry. the table is the unit square; the mouths are its only gaps
@@ -57,7 +57,7 @@ scene = Scene(
     ],
 
     basinObjects={
-        1: [Elipse(*BASIN_CORNER, BASIN_RADIUS, BASIN_RADIUS, 0.0)],
+        1: [Ellipse(*BASIN_CORNER, BASIN_RADIUS, BASIN_RADIUS, 0.0)],
     },
 )
 
