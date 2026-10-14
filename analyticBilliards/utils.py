@@ -13,6 +13,7 @@ BASIN_COLORS = ["#c1272d", "#1baf7a", "#00420d", "#b8860b"]
 WALL_STYLE = {"color": WALL_COLOR, "lw": 1.5, "zorder": 3}
 PORTAL_STYLE = {"lw": 3.0, "zorder": 5}
 BASIN_STYLE = {"lw": 3.0, "zorder": 4}
+TRAJECTORY_STYLE = {"lw": 0.5}
 
 ARC_POINTS = 361
 
@@ -98,8 +99,8 @@ def plotScene(scene, axes):
         _drawInfiniteLines(axes, lines)
 
     axes.set_aspect("equal")
-    axes.set_xlabel("x")
-    axes.set_ylabel("y")
+    axes.set_xlabel("$x$")
+    axes.set_ylabel("$y$")
     if axes.get_legend_handles_labels()[0]:
         axes.legend(loc="best", fontsize=9, framealpha=0.85)
     return axes
@@ -131,7 +132,7 @@ def plotTrajectory(axes, x, y, vx, vy, resolution, g, particles, interval,
         px, py = x[i, rows], y[i, rows]
 
         axes.plot(*_parabolas(px, py, vx[i, rows], vy[i, rows], resolution, g),
-                  **{"color": color, **style})
+                  **{**TRAJECTORY_STYLE, "color": color, **style})
         axes.plot(px[0], py[0], START_MARKER, color=color, **MARKER_STYLE)
         axes.plot(px[-1], py[-1], END_MARKER, color=color, **MARKER_STYLE)
     return axes
