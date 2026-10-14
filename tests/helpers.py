@@ -12,7 +12,7 @@ import math
 
 import numpy as np
 
-from hpcBilliards import Elipse, Line, LineSegment, Portal, Scene, updateScene
+from analyticBilliards import Elipse, Line, LineSegment, Portal, Scene, updateScene
 
 # an exact claim -- a reflected speed, a teleported height -- is asserted at the
 # width of double rounding, not at a physics tolerance

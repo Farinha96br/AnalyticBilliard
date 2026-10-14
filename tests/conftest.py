@@ -1,6 +1,6 @@
 """The --backend option and the compiled scenes the suite shares.
 
-hpcBilliards is not installed -- there is no pyproject.toml and no setup.py --
+analyticBilliards is not installed -- there is no pyproject.toml and no setup.py --
 so it imports as a top-level package from the repo root and nowhere else. The
 sys.path line below is what lets `pytest` run from any directory.
 
@@ -18,8 +18,8 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from hpcBilliards import compileScene            # noqa: E402
-from hpcBilliards.compile import BACKENDS        # noqa: E402
+from analyticBilliards import compileScene            # noqa: E402
+from analyticBilliards.compile import BACKENDS        # noqa: E402
 
 import helpers                                   # noqa: E402
 

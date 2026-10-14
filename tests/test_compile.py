@@ -14,7 +14,7 @@ the one that pins the claim above rather than assuming it.
 import numpy as np
 import pytest
 
-from hpcBilliards import SceneError, compileScene, getBasins, updateScene
+from analyticBilliards import SceneError, compileScene, getBasins, updateScene
 
 import helpers as H
 from helpers import push

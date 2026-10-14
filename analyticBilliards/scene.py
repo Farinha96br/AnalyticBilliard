@@ -223,7 +223,7 @@ def _asScene(scene, who):
             f"objects, so a missing angle or a misspelled key is an error where "
             f"you write it:\n"
             f"    Scene(g=0.5, solidObjects=[LineSegment(0, 0, 1, 0)])\n"
-            f"Import them from hpcBilliards.")
+            f"Import them from analyticBilliards.")
     raise SceneError(f"{who} takes a Scene, got {type(scene).__name__}")
 
 

@@ -1,4 +1,4 @@
-"""The plotting helpers in hpcBilliards.utils, on one scene.
+"""The plotting helpers in analyticBilliards.utils, on one scene.
 
 A unit square under gravity, two portals joining the side walls, and a basin in
 the top-right corner -- drawn, but never asked for, so it changes nothing here.
@@ -11,8 +11,8 @@ import matplotlib
 matplotlib.use("Agg")  # straight to a file, no window
 import matplotlib.pyplot as plt
 
-from hpcBilliards import (Elipse, LineSegment, Portal, Scene, compileScene)
-from hpcBilliards.utils import plotScene, plotTrajectory, toBirkoff
+from analyticBilliards import (Elipse, LineSegment, Portal, Scene, compileScene)
+from analyticBilliards.utils import plotScene, plotTrajectory, toBirkoff
 
 # geometry. the table is the unit square; the mouths are its only gaps
 G = 0.5

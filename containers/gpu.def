@@ -26,7 +26,7 @@ detect.
     export PATH=/opt/venv/bin:$PATH
     export MPLBACKEND=Agg
 
-    # hpcBilliards/compile.py defaults NVCXX to a hardcoded
+    # analyticBilliards/compile.py defaults NVCXX to a hardcoded
     # /opt/nvidia/hpc_sdk/.../26.1/compilers/bin/nvc++ that will not exist here.
     # The bare name resolves through PATH instead, whatever the image ships
     export AB_NVCXX=nvc++

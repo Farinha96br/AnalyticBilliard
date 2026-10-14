@@ -16,7 +16,7 @@ was actually running. deadTime needs its own trick, below.
 import numpy as np
 import pytest
 
-from hpcBilliards import Line, LineSegment, Scene, compileScene, updateScene
+from analyticBilliards import Line, LineSegment, Scene, compileScene, updateScene
 
 V0 = 1.0
 

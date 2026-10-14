@@ -4,8 +4,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc
 
-from hpcBilliards import commomTables as T
-from hpcBilliards.utils import plotScene
+from analyticBilliards import commomTables as T
+from analyticBilliards.utils import plotScene
 
 CM = 1 / 2.54
 plt.rcParams.update({"text.usetex": True, "font.family": "serif",

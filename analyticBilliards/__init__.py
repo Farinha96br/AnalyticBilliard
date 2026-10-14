@@ -1,6 +1,6 @@
 """AnalyticBilliard as a shared library.
 
-    from hpcBilliards import Scene, LineSegment, compileScene, updateScene
+    from analyticBilliards import Scene, LineSegment, compileScene, updateScene
 
     scene = Scene(g=1.0, solidObjects=[LineSegment(0, 0, 1, 0), ...])
     compiled = compileScene(scene, backend="openmp")
