@@ -85,44 +85,6 @@ def specMushroom(ax):
         at=-1.7)
 
 
-def specPolygon(theta0):
-    def spec(ax):
-        radius(ax, (0, 0), polar(1.0, theta0), "", at=0.6)
-        ax.text(*polar(0.45, theta0 + 0.25), r"$R$", **TEXT_STYLE)
-        angle(ax, (0, 0), 0.35, 0.0, theta0, r"$\theta_0$",
-              (0.5, -0.15))
-    return spec
-
-
-def specFlower(scene, theta0, X):
-    def spec(ax):
-        arc = scene.solidObjects[0]
-        mid = 0.5 * (arc.phi0 + arc.phi1)
-        m = np.array([arc.cx + arc.a * np.cos(mid),
-                      arc.cy + arc.a * np.sin(mid)])
-        v0 = polar(1.0, theta0)
-        v1 = polar(1.0, theta0 + 2 * np.pi / len(scene.solidObjects))
-        chordMid = 0.5 * (np.array(v0) + np.array(v1))
-        radius(ax, (0, 0), v0, "")
-        ax.text(*polar(0.5, theta0 + 0.25), r"$R$", **TEXT_STYLE)
-        angle(ax, (0, 0), 0.3, 0.0, theta0, r"$\theta_0$", (0.5, -0.12))
-        guide(ax, v0, v1)
-        ax.annotate("", m, chordMid, arrowprops={"arrowstyle": "->", **ARROW})
-        ax.text(*(chordMid - 0.7 * (m - chordMid)), r"$X$", **TEXT_STYLE)
-    return spec
-
-
-def specPolyCircle(ax):
-    radius(ax, (0, 0), polar(1.0, -np.pi / 2), r"$R$", at=0.78)
-    dim(ax, (0, 0), (0.5, 0), "")
-    ax.text(0.25, -0.15, r"$d$", **TEXT_STYLE)
-    radius(ax, (0.5, 0), (0.5, 0.15), "", at=0.5)
-    ax.text(0.5, 0.3, r"$r$", **TEXT_STYLE)
-
-
-flowerOut = T.flower(1.0, 5, 0.3, 0.9)
-flowerIn = T.flower(1.0, 4, 0.3, -0.5)
-
 TABLES = [
     (r"(a) \texttt{circle(R)}", T.circle(1.0), specCircle),
     (r"(b) \texttt{oval(a, b, theta0)}", T.oval(1.0, 0.5, 0.3), specOval),
@@ -130,23 +92,10 @@ TABLES = [
     (r"(d) \texttt{lemon(B, R)}", T.lemon(0.5, 1.0), specLemon),
     (r"(e) \texttt{mushroom(R, w, h, offset)}", T.mushroom(1.0, 0.5, 1.0, 0.2),
      specMushroom),
-    (r"(f) \texttt{poliLine(R, N, theta0)}", T.poliLine(1.0, 5, 0.2),
-     specPolygon(0.2)),
-    (r"(g) \texttt{poliLineSeg(R, N, theta0)}", T.poliLineSeg(1.0, 6, 0.1),
-     specPolygon(0.1)),
-    (r"(h) \texttt{flower(R, N, theta0, X)}", flowerOut,
-     specFlower(flowerOut, 0.3, 0.9)),
-    (r"(i) \texttt{flower(R, N, theta0, X)}", flowerIn,
-     specFlower(flowerIn, 0.3, -0.5)),
-    (r"(j) \texttt{PolyCircle(N, R, r, d)}",
-     T.PolyCircle(3, 1.0, 0.15, 0.5), specPolyCircle),
 ]
 
-figure, axes = plt.subplots(2, 5, figsize=(17 * CM, 8.0 * CM))
-for ax, (title, scene, spec) in zip(axes.ravel(), TABLES):
-    if "poliLine(" in title:
-        ax.set_xlim(-1.1, 1.1)
-        ax.set_ylim(-1.1, 1.1)
+figure, axes = plt.subplots(1, 5, figsize=(17 * CM, 3.7 * CM))
+for ax, (title, scene, spec) in zip(axes, TABLES):
     plotScene(scene, ax)
     for line in ax.lines:
         line.set_linewidth(0.9)
@@ -157,7 +106,7 @@ for ax, (title, scene, spec) in zip(axes.ravel(), TABLES):
     ax.axis("off")
     ax.set_title(title, fontsize=6, loc="left", pad=2)
 
-figure.subplots_adjust(left=0.005, right=0.995, top=0.94, bottom=0.005,
-                       wspace=0.04, hspace=0.14)
+figure.subplots_adjust(left=0.005, right=0.995, top=0.9, bottom=0.01,
+                       wspace=0.04)
 figure.savefig("commonTablesExample.pdf")
 figure.savefig("commonTablesExample.png", dpi=300)
