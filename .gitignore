@@ -9,3 +9,4 @@
 *.sif
 refs/
 *.egg-info
+*.log
