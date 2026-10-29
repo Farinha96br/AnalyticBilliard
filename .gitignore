@@ -10,3 +10,17 @@
 refs/
 *.egg-info
 *.log
+__pycache__/
+.pytest_cache/
+*.npz
+# LaTeX build files
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*_preview.pdf
+# benchmark results and side experiments
+benchmarks/results/
+benchmarks/IO_EXPERIMENTS/
+benchmarks/GPU_WORTH/
+benchmarks/ENERGY_DRIFT/
