@@ -77,8 +77,10 @@ def build(header_src, backend):
     flags = BACKENDS[backend]()
     link = LINK_LAST.get(backend, list)()
 
-    ubody = (CPP / "UsableFunctions.cpp").read_bytes()
-    key = hashlib.sha1(header_src.encode() + ubody
+    # every fixed source, headers included: an edit to any of them must rebuild
+    sources = b"".join(f.name.encode() + f.read_bytes()
+                       for f in sorted(CPP.glob("*")) if f.suffix in (".h", ".cpp"))
+    key = hashlib.sha1(header_src.encode() + sources
                        + repr(flags).encode() + repr(link).encode()).hexdigest()[:16]
 
     CACHE.mkdir(exist_ok=True)

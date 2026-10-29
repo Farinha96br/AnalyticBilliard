@@ -100,110 +100,126 @@ inline double firstRootN(Roots r) {
 }
 
 
-// a positive real root of m^3 + B m^2 + C m + D, for a cubic negative at zero.
-// Ferrari's resolvent always is, and is the only caller. starting from Cauchy's
-// bound and walking down finds the largest root first, which keeps the q/s
-// division in Ferrari well scaled; bisection catches Newton whenever it leaves
-// the bracket, making convergence unconditional
-inline double cubicRootAboveZero(double B, double C, double D) {
-    double lo = 0.0; // f(0) = D < 0 by precondition
-    double hi = 1.0 + fabs(B);
-    if (fabs(C) > hi - 1.0) hi = 1.0 + fabs(C);
-    if (fabs(D) > hi - 1.0) hi = 1.0 + fabs(D);
+// a polynomial of degree four or less, c0 + c1 t + ... + c4 t^4. a small
+// struct passed by value stays in registers on the GPU, where an indexed
+// array of coefficients would not
+struct Poly4 {
+    double c0, c1, c2, c3, c4;
+};
 
-    double m = hi;
-    for (int k = 0; k < 200; ++k) {
-        double f = ((m + B) * m + C) * m + D;
-        if (f > 0.0) hi = m; else lo = m; // keep f(lo) <= 0 <= f(hi)
-
-        double df = (3.0 * m + 2.0 * B) * m + C;
-        double next = (df != 0.0) ? m - f / df : 0.5 * (lo + hi);
-        if (!(next > lo && next < hi)) next = 0.5 * (lo + hi); // also catches NaN
-
-        if (fabs(next - m) <= 1e-17 * fabs(m)) return next;
-        m = next;
-    }
-    return m;
+// value and slope, by Horner's rule
+inline double polyValue(Poly4 p, double t, double *slope) {
+    *slope = ((4.0 * p.c4 * t + 3.0 * p.c3) * t + 2.0 * p.c2) * t + p.c1;
+    return (((p.c4 * t + p.c3) * t + p.c2) * t + p.c1) * t + p.c0;
 }
 
-// real roots of A4 t^4 + A3 t^3 + A2 t^2 + A1 t + A0, by Ferrari's method
+// the root of p in [lo, hi], an interval over which p is monotonic and changes
+// sign, flo being its value at lo. Newton's method from the midpoint, falling
+// back to bisection whenever a step would leave the bracket, so it converges
+// from any start and can only land on a sign change
+inline double bracketedRoot(Poly4 p, double lo, double hi, double flo) {
+    double slope;
+    bool negLo = flo < 0.0;
+    double t = 0.5 * (lo + hi);
+    for (int k = 0; k < 2100; ++k) {
+        double f = polyValue(p, t, &slope);
+        if (f == 0.0) return t;
+        if ((f < 0.0) == negLo) lo = t; else hi = t; // keep the sign change inside
+        double next = (slope != 0.0) ? t - f / slope : 0.5 * (lo + hi);
+        if (!(next > lo && next < hi)) next = 0.5 * (lo + hi);
+        if (!(next > lo && next < hi)) return t;  // lo and hi are adjacent doubles
+        if (fabs(next - t) <= 1e-15 * fabs(next)) return next;
+        t = next;
+    }
+    return t;
+}
+
+// a point beyond x, in direction dir = +-1, where p has the sign it takes at
+// that infinity (negative when neg): steps double until the sign is reached.
+// the value there is left in *f
+inline double reachSign(Poly4 p, double x, double dir, bool neg, double *f) {
+    double slope, step = fabs(x) > 1.0 ? fabs(x) : 1.0;
+    double y = x + dir * step;
+    for (int k = 0; k < 2100; ++k) {
+        *f = polyValue(p, y, &slope);
+        if (*f != 0.0 && (*f < 0.0) == neg) return y;
+        step *= 2.0;
+        y = x + dir * step;
+    }
+    return y;
+}
+
+// the real roots of p (degree d, its leading coefficient nonzero) that are
+// larger than after, ascending, at most cap, given the ascending real roots
+// x[0..nx) of its derivative. between two consecutive critical points p is
+// monotonic, so each interval holds a root exactly when p changes sign across
+// it. every interval is checked, and a root is reported only where the computed
+// p changes sign, never from an estimate.
+// a value of exactly zero at a critical point is a multiple root, reported once
+inline int rootsBetween(Poly4 p, int d, const double *x, int nx, double after,
+                        double *out, int cap) {
+    double slope, fx[3];
+    for (int i = 0; i < nx; ++i) fx[i] = polyValue(p, x[i], &slope);
+    bool negRight = ((d == 4) ? p.c4 : p.c3) < 0.0;      // sign at +infinity
+    bool negLeft = (d % 2 == 0) ? negRight : !negRight; // and at -infinity
+    int n = 0;
+    for (int i = 0; i <= nx && n < cap; ++i) {
+        if (i < nx && x[i] <= after) continue;   // the whole interval lies before
+        double fL = (i == 0) ? (negLeft ? -1.0 : 1.0) : fx[i - 1];
+        double fR = (i == nx) ? (negRight ? -1.0 : 1.0) : fx[i];
+        if (fL != 0.0 && fR != 0.0 && (fL < 0.0) != (fR < 0.0)) {
+            double lo, hi;
+            if (i == 0) lo = reachSign(p, nx > 0 ? x[0] : 0.0, -1.0, negLeft, &fL);
+            else lo = x[i - 1];
+            if (i == nx) hi = reachSign(p, nx > 0 ? x[nx - 1] : 0.0, 1.0, negRight, &fR);
+            else hi = x[i];
+            double t = bracketedRoot(p, lo, hi, fL);
+            if (t > after) out[n++] = t;
+        }
+        if (i < nx && fx[i] == 0.0 && n < cap) out[n++] = x[i];
+    }
+    return n;
+}
+
+// the real roots of A4 t^4 + A3 t^3 + A2 t^2 + A1 t + A0 that come after
+// deadTime, ascending: the only ones a hit time can use. the quartic is
+// monotonic between the roots of its derivative, a cubic, which is monotonic
+// between the roots of its own derivative, a quadratic solved in closed form:
+// the roots of each level bracket those of the level above, so every root is
+// located inside a bracket, never estimated
 inline Roots quartRoots(double A4, double A3, double A2, double A1, double A0) {
     Roots out = {{0.0, 0.0, 0.0, 0.0}, 0};
 
-    double big = fabs(A3);
-    if (fabs(A2) > big) big = fabs(A2);
-    if (fabs(A1) > big) big = fabs(A1);
-    if (fabs(A0) > big) big = fabs(A0);
-    if (fabs(A4) <= 1e-14 * big) { // g == 0: the trajectory is a straight line
+    // A4 = (g^2/4)(sin^2/a^2 + cos^2/b^2) is exactly zero when g == 0, and only
+    // then: the trajectory is a straight line, and A3 vanishes with it. a tiny
+    // but nonzero g still bends the flight back eventually, so it is solved in full
+    if (A4 == 0.0) {
         vector2D r = quadRoots(A2, A1, A0);
         if (r.x != MAGIC_NO_COLLISION) out.t[out.n++] = r.x;
         if (r.y != MAGIC_NO_COLLISION) out.t[out.n++] = r.y;
         return out;
     }
 
-    // depress with t = z - a3/4: z^4 + p z^2 + q z + r
-    double a3 = A3 / A4, a2 = A2 / A4, a1 = A1 / A4, a0 = A0 / A4;
-    double p = a2 - 3.0 * a3 * a3 / 8.0;
-    double q = a1 - a2 * a3 / 2.0 + a3 * a3 * a3 / 8.0;
-    double r = a0 - a1 * a3 / 4.0 + a2 * a3 * a3 / 16.0 - 3.0 * a3 * a3 * a3 * a3 / 256.0;
-    double shift = a3 / 4.0;
+    Poly4 quartic = {A0, A1, A2, A3, A4};
+    Poly4 cubic = {A1, 2.0 * A2, 3.0 * A3, 4.0 * A4, 0.0};
 
-    double qScale = fabs(p) > fabs(r) ? fabs(p) : fabs(r);
-    if (qScale < 1.0) qScale = 1.0;
-
-    if (fabs(q) <= 1e-14 * qScale) { // biquadratic: solve for z^2, then take roots
-        vector2D z2 = quadRoots(1.0, p, r);
-        double c2[2] = {z2.x, z2.y};
-        for (int i = 0; i < 2; ++i) {
-            if (c2[i] != MAGIC_NO_COLLISION && c2[i] >= 0.0) {
-                double z = sqrt(c2[i]);
-                out.t[out.n++] = z - shift;
-                out.t[out.n++] = -z - shift;
-            }
-        }
-    } else {
-        // factor into (z^2 + s z + u)(z^2 - s z + w); eliminating u and w leaves
-        // this cubic in m = s^2, which is -q^2 < 0 at the origin and unbounded
-        // above, so a positive root always exists
-        double m = cubicRootAboveZero(2.0 * p, p * p - 4.0 * r, -q * q);
-        if (m <= 0.0) return out;
-
-        double s = sqrt(m);
-        double u = ((p + m) - q / s) / 2.0;
-        double w = ((p + m) + q / s) / 2.0;
-
-        vector2D r1 = quadRoots(1.0, s, u);
-        vector2D r2 = quadRoots(1.0, -s, w);
-        double z[4] = {r1.x, r1.y, r2.x, r2.y};
-        for (int i = 0; i < 4; ++i) {
-            if (z[i] != MAGIC_NO_COLLISION) out.t[out.n++] = z[i] - shift;
-        }
+    // inflection points: the roots of the second derivative
+    double infl[2];
+    int ni = 0;
+    vector2D r2 = quadRoots(12.0 * A4, 6.0 * A3, 2.0 * A2);
+    if (r2.x != MAGIC_NO_COLLISION) infl[ni++] = r2.x;
+    if (r2.y != MAGIC_NO_COLLISION) infl[ni++] = r2.y;
+    if (ni == 2 && infl[1] < infl[0]) {
+        double tmp = infl[0];
+        infl[0] = infl[1];
+        infl[1] = tmp;
     }
 
-    // Ferrari alone lands only within ~1e-5 once the resolvent is ill conditioned,
-    // coarse enough to let a particle slip through a wall. two Newton steps reach
-    // machine precision; a third measurably buys nothing
-    int kept = 0;
-    for (int i = 0; i < out.n; ++i) {
-        double t = out.t[i];
-        for (int k = 0; k < 2; ++k) {
-            double F = (((A4 * t + A3) * t + A2) * t + A1) * t + A0;
-            double dF = ((4.0 * A4 * t + 3.0 * A3) * t + 2.0 * A2) * t + A1;
-            if (dF == 0.0) break; // a double root
-            t -= F / dF;
-        }
-
-        // on a near miss the factorisation can hand back a value that never
-        // crossed zero, and Newton merely parks it near a minimum of F. accepting
-        // that invents a collision and teleports the particle onto the surface,
-        // so the residual has the final say
-        double F = (((A4 * t + A3) * t + A2) * t + A1) * t + A0;
-        double m = fabs(t);
-        double scale = (((fabs(A4) * m + fabs(A3)) * m + fabs(A2)) * m + fabs(A1)) * m + fabs(A0);
-        if (scale < 1.0) scale = 1.0;
-        if (fabs(F) <= 1e-10 * scale) out.t[kept++] = t;
-    }
-    out.n = kept;
+    // every critical point is needed, past ones included: they bound the
+    // intervals that reach into the future
+    double crit[3];
+    int nc = rootsBetween(cubic, 3, infl, ni, -INFINITY, crit, 3);
+    out.n = rootsBetween(quartic, 4, crit, nc, deadTime, out.t, 4);
     return out;
 }
 
@@ -356,6 +372,7 @@ inline vector2D ellipseToWorld(Object o, double u, double v, bool isPoint) {
 // u and v are both quadratic in t, so their squares are quartic. A0 is negative
 // inside the ellipse and positive outside, which is why neither case needs its
 // own branch. kept apart from ellipseHitTime so an arc can see every root
+// after deadTime, which is all quartRoots returns
 inline Roots ellipseRoots(Object o, state s) {
     double c = o.p[5], sn = o.p[6];
     double ia = 1.0 / (o.p[2] * o.p[2]), ib = 1.0 / (o.p[3] * o.p[3]);

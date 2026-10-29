@@ -18,9 +18,8 @@ Run `pytest tests/` from the repo root; it needs only `numpy`, `pytest` and a
 `g++`. The suite compiles its own scenes, so the first run spends a second or
 two building and later runs come straight out of `.abcache/`. It uses the
 `linear` backend by default — pass `--backend openmp`, or `gpu_openmp` given a
-device, to run the same checks against another one. Note that the build cache
-does not notice edits to the headers in `src/cpp/`, so clear it with
-`rm -rf .abcache` before testing a change to the physics.
+device, to run the same checks against another one. The build cache is keyed on
+every source in `src/cpp/`, so an edit to any of them rebuilds on the next run.
 
 On `gpu_openmp` the whole suite passes and the results are bit-for-bit the ones
 the CPU backends give, but the process still **exits with code 1**. The suite
