@@ -1,6 +1,6 @@
 import numpy as np
 
-from .scene import Ellipse, EllipseArc, Line, LineSegment, Scene, SceneError
+from ..scene import Ellipse, EllipseArc, Line, LineSegment, Scene, SceneError
 
 
 def _minSides(N):
