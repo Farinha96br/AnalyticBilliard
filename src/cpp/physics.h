@@ -8,10 +8,8 @@
 
 inline state bounce(Object o, state s) {
     vector2D n = normalAt(o, s);
-    double vn = s.vx * n.x + s.vy * n.y;
-    return {s.x, s.y,
-            s.vx - (1.0 + e) * vn * n.x,
-            s.vy - (1.0 + e) * vn * n.y};
+    double k = (1.0 + e) * (s.vx * n.x + s.vy * n.y) / (n.x * n.x + n.y * n.y);
+    return {s.x, s.y, s.vx - k * n.x, s.vy - k * n.y};
 }
 
 // no length is kept: asPortal builds the pair at matching sizes, so the map is a
